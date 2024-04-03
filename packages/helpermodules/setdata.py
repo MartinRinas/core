@@ -958,7 +958,9 @@ class SetData:
         """
         try:
             if ("alllivevaluesJson" in msg.topic or
-                    "openWB/set/graph/lastlivevaluesJson" in msg.topic):
+                    "openWB/set/graph/lastlivevaluesJson" in msg.topic
+                    or "energydestinationJson" in msg.topic
+                    or "energysourceJson" in msg.topic):
                 self._validate_value(msg, "json")
             elif "config" in msg.topic:
                 if "duration" in msg.topic:
