@@ -38,33 +38,32 @@ class Graph:
 
         try:
             data_line = {"timestamp": int(time.time()), "time": datetime.datetime.today().strftime("%H:%M:%S")}
-            energysource_line = data_line.copy()
-            energydestination_line = data_line.copy()
+            energysource_line = []
+            energydestination_line = []
             evu_counter = data.data.counter_all_data.get_evu_counter_str()
             if data.data.counter_data[evu_counter].data.get.fault_state < FaultStateLevel.ERROR:
                 data_line.update({"grid": _convert_to_kW(data.data.counter_data[evu_counter].data.get.power)})
                 if data.data.counter_data[evu_counter].data.get.power > 0:
-                    energysource_line.update({"grid": _convert_to_kW(
-                        data.data.counter_data[evu_counter].data.get.power)})
+                    energysource_line.append({"type": "EVU", "measurement": _convert_to_kW(
+                        data.data.counter_data[evu_counter].data.get.power), "direction": "in"})
                 else:
-                    energydestination_line.update({"grid": _convert_to_kW(
-                        data.data.counter_data[evu_counter].data.get.power*-1)})
+                    energydestination_line.append({"type": "EVU", "measurement": _convert_to_kW(
+                        data.data.counter_data[evu_counter].data.get.power*-1), "direction": "out"})
             for c in data.data.counter_data:
                 if "counter" in c and evu_counter not in c:
                     counter = data.data.counter_data[c]
                     if counter.data.get.fault_state < FaultStateLevel.ERROR:
                         data_line.update({f"counter{counter.num}-power": _convert_to_kW(counter.data.get.power)})
-                        energydestination_line.update({f"counter{counter.num}-power": _convert_to_kW(
-                            counter.data.get.power)})
+                        energydestination_line.append({"type": f"counter{counter.num}-power", "measurement": _convert_to_kW(counter.data.get.power), "direction": "out"})
             data_line.update({"house-power": _convert_to_kW(data.data.counter_all_data.data.set.home_consumption)})
-            energydestination_line.update({"house-power": _convert_to_kW(
-                data.data.counter_all_data.data.set.home_consumption)})
+            energydestination_line.append({"type": "house-power", "measurement": _convert_to_kW(
+                data.data.counter_all_data.data.set.home_consumption), "direction": "out"})
             data_line.update({"charging-all": _convert_to_kW(data.data.cp_all_data.data.get.power)})
-            energydestination_line.update({"charging-all": _convert_to_kW(
-                data.data.cp_all_data.data.get.power)})
+            energydestination_line.append({"type": "charging-all", "measurement": _convert_to_kW(
+                data.data.cp_all_data.data.get.power), "direction": "out"})
             if data.data.pv_all_data.data.config.configured:
                 data_line.update({"pv-all": _convert_to_kW(data.data.pv_all_data.data.get.power)*-1})
-                energysource_line.update({"pv-all": _convert_to_kW(data.data.pv_all_data.data.get.power)*-1})
+                energysource_line.append({"type": "PV", "measurement": _convert_to_kW(data.data.pv_all_data.data.get.power)*-1, "direction": "in"})
             for cp in data.data.cp_data.values():
                 if cp.data.get.fault_state < FaultStateLevel.ERROR:
                     data_line.update({f"cp{cp.num}-power": _convert_to_kW(cp.data.get.power)})
@@ -74,10 +73,10 @@ class Graph:
             if data.data.bat_all_data.data.config.configured:
                 data_line.update({"bat-all-power": _convert_to_kW(data.data.bat_all_data.data.get.power)})
                 if data.data.bat_all_data.data.get.power > 0:
-                    energydestination_line.update({"bat-all-power": _convert_to_kW(
-                        data.data.bat_all_data.data.get.power)})
+                    energydestination_line.append({"type": "bat-all", "measurement": _convert_to_kW(
+                        data.data.bat_all_data.data.get.power), "direction": "out"})
                 else:
-                    energysource_line.update({"bat-all-power": _convert_to_kW(data.data.bat_all_data.data.get.power)})
+                    energysource_line.append({"type": "bat-all", "measurement": _convert_to_kW(data.data.bat_all_data.data.get.power), "direction": "in"})
                 data_line.update({"bat-all-soc": data.data.bat_all_data.data.get.soc})
 
             Pub().pub("openWB/set/graph/lastlivevaluesJson", data_line)
