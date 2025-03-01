@@ -46,6 +46,8 @@ import { ref } from 'vue';
 import { useQuasar } from 'quasar';
 import EnergyFlowChart from './charts/energyFlowChart/EnergyFlowChart.vue';
 import HistoryChart from './charts/historyChart/HistoryChart.vue';
+import EnergyFlowChart2 from './charts/energyFlowChart2/EnergyFlowChart2.vue';
+import LiveStatus from './charts/livestatus/LiveStatus.vue';
 
 defineOptions({
   name: 'ChartCarousel',
@@ -67,6 +69,14 @@ const chartCarouselItems = [
   {
     name: 'HistoryChart',
     component: HistoryChart,
+  },
+  {
+    name: 'EnergyFlowChart2',
+    component: EnergyFlowChart2,
+  },
+  {
+    name: 'LiveStatus',
+    component: LiveStatus,
   },
 ];
 const currentSlide = ref<string>(chartCarouselItems[0].name);
