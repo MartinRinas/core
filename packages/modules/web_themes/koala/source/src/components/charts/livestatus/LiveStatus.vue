@@ -1,108 +1,123 @@
 <template>
-  <q-card class="custom-width bg-light">
-    <q-card-section>
+  <div class="custom-width">
+    
       <div class="card-container">
         <!-- PV Card -->
-        <q-card class="item pv" flat bordered>
-
-            <div class="header">Produktion</div>
+        <q-card class="item pv" flat>
+            <div class="header">PV</div>
             <div class="row">
               <div class="col text-value">
-           {{ data.pv }}&nbsp;W
+           {{ formatValue(pvPower*-1) }}W
               </div>
               <div class="col icon-container">
-                <q-icon name="solar_power" class="icon-background text-yellow-600" />
+                <q-badge rounded class="pv-background">
+                  <q-icon name="solar_power" style="font-size: 24px;" class="pv-color" />
+                  <q-tooltip class="bg-primary">Phasenanzahl</q-tooltip>
+                </q-badge>
               </div>
             </div>
         </q-card>
 
         <!-- Grid Card -->
-        <q-card class="item grid" flat bordered>
-          
-            <div class="header">Grid</div>
+        <q-card class="item grid" flat >
+            <div class="header" >Netz</div>
             <div class="row">
-              <div class="col text-value">
-                {{ data.grid }}&nbsp;W
+              <div class="col text-value" >
+                {{ formatValue(gridPower) }}W
               </div>
               <div class="col icon-container">
-                <q-icon name="power" class="icon-background text-blue-600" />
+                <q-badge rounded class="grid-background">
+                  <q-icon name="power" style="font-size: 24px;" class="grid-color"/>
+                  <q-tooltip class="bg-primary">EVU</q-tooltip>
+                </q-badge>
               </div>
             </div>
 
         </q-card>
 
         <!-- House Card -->
-        <q-card class="item house" flat bordered>
-            <div class="header">House</div>
+        <q-card class="item house" flat >
+            <div class="header" >Haus</div>
             <div class="row">
               <div class="col text-value">
-                {{ data.house }}&nbsp;W
+                {{ formatValue(homePower)}}W
               </div>
               <div class="col icon-container">
-                <q-icon name="home" class="icon-background text-gray-600" />
+                <q-badge rounded class="house-background">
+                  <q-icon name="home" style="font-size: 24px;" class="house-color" />
+                  <q-tooltip class="bg-primary">gesamter Hausverbrauch heute:<br></q-tooltip>
+                </q-badge>
               </div>
             </div>
         </q-card>
 
         <!-- Battery Card -->
-        <q-card class="item battery" flat bordered>
-            <div class="header">Battery</div>
+        <q-card class="item battery" flat >
+            <div class="header" >Speicher</div>
             <div class="row">
-              <div class="col text-value">
-                {{ data.battery }}&nbsp;W
-              </div>
-              <div class="col">
-                <span v-if="data.battery > 0">Aufladen</span>
-                <span v-else>Entladen</span>
+              <div class="col text-value" style="font-size: 14px;">
+                {{ formatValue(batteryPower) }}W<br />
+                {{ (batterySoc * 100).toFixed(0) }}%
               </div>
               <div class="col icon-container">
-                <q-icon name="battery_charging_full" class="icon-background text-green-600" />
+                <q-badge rounded class="battery-background">
+                  <q-icon name="battery_charging_full" style="font-size: 24px;" class="battery-color" />
+                  <q-tooltip class="bg-primary">Speicher</q-tooltip>
+                </q-badge>
               </div>
             </div>
         </q-card>
 
         <!-- EV Card -->
-        <q-card class="item ev" flat bordered>
-            <div class="header">EV</div>
+        <q-card class="item ev" flat >
+            <div class="header">Ladepunkte</div>
             <div class="row">
               <div class="col text-value">
-                {{ data.ev }}&nbsp;W
+                {{ formatValue(evPower) }}W
               </div>
               <div class="col icon-container">
-                <q-icon name="ev_station" class="icon-background text-purple-600" />
+                <q-badge rounded class="ev-background">
+                  <q-icon name="ev_station" style="font-size: 24px;" class="ev-color" />
+                  <q-tooltip class="bg-primary">Ladepunkte</q-tooltip>
+                </q-badge>
               </div>
             </div>
         </q-card>
       </div>
-    </q-card-section>
-  </q-card>
+    
+  </div>
 </template>
 
-<script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
-import { QCard, QCardSection, QIcon } from 'quasar';
+<script setup lang="ts">
+import { onMounted, computed } from 'vue';
+import { QCard, QIcon } from 'quasar';
+import { useMqttStore } from 'src/stores/mqtt-store';
+const mqttStore = useMqttStore();
 
-const data = ref({
-  pv: 0,
-  house: 0,
-  grid: 0,
-  battery: 0,
-  ev: 0,
-});
+const gridPower = computed(
+  () => mqttStore.getGridPower('value') as number,
+);
 
-const fetchData = () => {
-  data.value = {
-    pv: Math.floor(Math.random() * 5000),
-    house: Math.floor(Math.random() * 4000),
-    grid: Math.floor(Math.random() * 2000) - 1000, // Negative for export
-    battery: Math.floor(Math.random() * 2000) - 1000, // Negative for discharging
-    ev: Math.floor(Math.random() * 7000),
-  };
+mqttStore
+
+const batteryPower = computed(() => mqttStore.batteryTotalPower('value') as number);
+const batterySoc = computed(() => Number(mqttStore.batterySocTotal) / 100);
+const homePower = computed(
+  () => mqttStore.getHomePower('value') as number,
+);
+const pvPower = computed(() => mqttStore.getPvPower('value') as number);
+const evPower = computed(() => mqttStore.chargePointSumPower('value') as number);
+
+const formatValue = (value: number) => {
+  if (Math.abs(value) >= 1000) {
+    return (value / 1000).toFixed(1) + 'k';
+  }
+  return value.toString();
 };
 
 onMounted(() => {
-  const interval = setInterval(fetchData, 5000);
-  onUnmounted(() => clearInterval(interval));
+  //const interval = setInterval(fetchData, 5000);
+  //onUnmounted(() => clearInterval(interval));
 });
 </script>
 
@@ -169,4 +184,44 @@ onMounted(() => {
   margin: 0 auto; /* Center the card horizontally */
 }
 
+/* Define color classes */
+.pv-background {
+  background-color: rgba(144, 238, 144, 0.2);
+}
+
+.pv-color {
+  color: green;
+}
+
+.grid-background {
+  background-color: rgba(239, 182, 188, 0.2);
+}
+
+.grid-color {
+  color: #a33c42;
+}
+
+.house-background {
+  background-color: rgba(148, 154, 161, 0.2);
+}
+
+.house-color {
+  color: #949aa1;
+}
+
+.battery-background {
+  background-color: rgba(181, 166, 71, 0.2);
+}
+
+.battery-color {
+  color: #b5a647;
+}
+
+.ev-background {
+  background-color: rgba(71, 102, 181, 0.2);
+}
+
+.ev-color {
+  color: #4766b5;
+}
 </style>
