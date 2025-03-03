@@ -52,7 +52,7 @@
         </q-card>
 
         <!-- Battery Card -->
-        <q-card class="item battery"  >
+        <q-card v-if="hasBattery" class="item battery"  >
             <div class="header" >Speicher</div>
             <div class="row">
               <div class="col text-value" style="font-size: 14px;">
@@ -100,7 +100,9 @@ const gridPower = computed(
   () => mqttStore.getGridPower('value') as number,
 );
 
-mqttStore
+const hasBattery = computed( 
+  () => mqttStore.batteryConfigured as boolean,
+);
 
 const batteryPower = computed(() => mqttStore.batteryTotalPower('value') as number);
 const batterySoc = computed(() => Number(mqttStore.batterySocTotal) / 100);
