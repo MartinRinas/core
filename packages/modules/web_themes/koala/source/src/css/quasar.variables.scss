@@ -75,10 +75,10 @@ $battery: #ba7128;
   }
   // Tab CSS
   .q-tab {
-    background-color: var(--q-background-2);
-    border-top-left-radius: 10px;
-    border-top-right-radius: 10px;
-    border: 1px solid var(--q-secondary);
+    //background-color: var(--q-background-2);
+    //border-top-left-radius: 10px;
+    //border-top-right-radius: 10px;
+    //border: 1px solid var(--q-secondary);
   }
   // Tab icon color
   .q-tab-icon {
@@ -86,7 +86,7 @@ $battery: #ba7128;
   }
   // Tab active background color
   .q-tab--active {
-    background-color: color.scale($secondary, $lightness: -2%);
+    background-color: color.scale($background-1, $lightness: -10%);
   }
   // Carousel control arrows and buttons
   .q-carousel__control {
@@ -193,9 +193,9 @@ $dark-tab-icon: #d7d9e0;
   // Tab CSS
   .q-tab {
     background-color: var(--q-background-2);
-    border-top-left-radius: 10px;
-    border-top-right-radius: 10px;
-    border: 1px solid var(--q-secondary);
+    //border-top-left-radius: 10px;
+    //border-top-right-radius: 10px;
+    //border: 1px solid var(--q-secondary);
   }
   // Tab active background color
   .q-tab--active {
