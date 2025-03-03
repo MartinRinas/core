@@ -3,7 +3,7 @@
     
       <div class="card-container">
         <!-- PV Card -->
-        <q-card class="item pv" flat>
+        <q-card class="item pv" >
             <div class="header">PV</div>
             <div class="row">
               <div class="col text-value">
@@ -19,7 +19,7 @@
         </q-card>
 
         <!-- Grid Card -->
-        <q-card class="item grid" flat >
+        <q-card class="item grid" >
             <div class="header" >Netz</div>
             <div class="row">
               <div class="col text-value" >
@@ -27,7 +27,7 @@
               </div>
               <div class="col icon-container">
                 <q-badge rounded class="grid-background">
-                  <q-icon name="power" style="font-size: 24px;" class="grid-color"/>
+                  <q-icon :name="mdiTransmissionTower" style="font-size: 24px;" class="grid-color"/>
                   <q-tooltip class="bg-primary">EVU</q-tooltip>
                 </q-badge>
               </div>
@@ -36,7 +36,7 @@
         </q-card>
 
         <!-- House Card -->
-        <q-card class="item house" flat >
+        <q-card class="item house"  >
             <div class="header" >Haus</div>
             <div class="row">
               <div class="col text-value">
@@ -52,7 +52,7 @@
         </q-card>
 
         <!-- Battery Card -->
-        <q-card class="item battery" flat >
+        <q-card class="item battery"  >
             <div class="header" >Speicher</div>
             <div class="row">
               <div class="col text-value" style="font-size: 14px;">
@@ -69,7 +69,7 @@
         </q-card>
 
         <!-- EV Card -->
-        <q-card class="item ev" flat >
+        <q-card class="item ev"  >
             <div class="header">Ladepunkte</div>
             <div class="row">
               <div class="col text-value">
@@ -92,6 +92,8 @@
 import { onMounted, computed } from 'vue';
 import { QCard, QIcon } from 'quasar';
 import { useMqttStore } from 'src/stores/mqtt-store';
+import { mdiTransmissionTower} from '@mdi/js';
+
 const mqttStore = useMqttStore();
 
 const gridPower = computed(

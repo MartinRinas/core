@@ -1,20 +1,19 @@
 <template>
-  <q-page class="column">
+
+<q-page class="column">
     <!-- Top Carousel -->
     <div class="row justify-center full-width chart-section">
       <ChartCarousel />
     </div>
 
     <!-- Navigation Tabs -->
-    <q-tabs v-model="tab" dense class="q-tabs__content--align-justify">
-      <q-tab name="charge-points" title="Ladepunkte">
-        <q-icon name="ev_station" size="md" color="primary" />
+     
+    <q-tabs v-model="tab" dense inline-label>
+      <q-tab name="charge-points" title="Ladepunkte" icon="ev_station" label="Ladepunkte">
       </q-tab>
-      <q-tab name="batteries" title="Speicher">
-        <q-icon name="battery_full" size="md" color="primary" />
+      <q-tab name="batteries" title="Speicher" icon="battery_full" label="Speicher">
       </q-tab>
-      <q-tab name="smartHome" title="SmartHome">
-        <q-icon name="home" size="md" color="primary" />
+      <q-tab name="smartHome" title="SmartHome" icon="home" label="SmartHome">
       </q-tab>
     </q-tabs>
     <!-- Tab Panels -->
@@ -40,7 +39,9 @@
         <SmartHomeInformation />
       </q-tab-panel>
     </q-tab-panels>
+
   </q-page>
+
 </template>
 
 <script setup lang="ts">
