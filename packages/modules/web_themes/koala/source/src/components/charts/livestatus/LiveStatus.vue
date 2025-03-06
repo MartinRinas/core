@@ -1,9 +1,8 @@
 <template>
   <div class="custom-width">
-    
       <div class="card-container">
         <!-- PV Card -->
-        <q-card class="item pv" >
+        <q-card v-if="hasPV" class="item pv" flat>
             <div class="header">PV</div>
             <div class="row">
               <div class="col text-value">
@@ -19,7 +18,7 @@
         </q-card>
 
         <!-- Grid Card -->
-        <q-card class="item grid" >
+        <q-card class="item grid" flat>
             <div class="header" >Netz</div>
             <div class="row">
               <div class="col text-value" >
@@ -36,7 +35,7 @@
         </q-card>
 
         <!-- House Card -->
-        <q-card class="item house"  >
+        <q-card class="item house" flat>
             <div class="header" >Haus</div>
             <div class="row">
               <div class="col text-value">
@@ -52,7 +51,7 @@
         </q-card>
 
         <!-- Battery Card -->
-        <q-card v-if="hasBattery" class="item battery"  >
+        <q-card v-if="hasBattery" class="item battery" flat>
             <div class="header" >Speicher</div>
             <div class="row">
               <div class="col text-value" style="font-size: 14px;">
@@ -69,7 +68,7 @@
         </q-card>
 
         <!-- EV Card -->
-        <q-card class="item ev"  >
+        <q-card class="item ev" flat>
             <div class="header">Ladepunkte</div>
             <div class="row">
               <div class="col text-value">
@@ -102,6 +101,10 @@ const gridPower = computed(
 
 const hasBattery = computed( 
   () => mqttStore.batteryConfigured as boolean,
+);
+
+const hasPV = computed(
+  () => mqttStore.getPvConfigured as boolean,
 );
 
 const batteryPower = computed(() => mqttStore.batteryTotalPower('value') as number);
@@ -144,6 +147,23 @@ onMounted(() => {
 
 .item.pv {
   flex: 1 1 100%; /* Make the PV card span the entire row */
+  border-left: 8px solid var(--pv-color); /* Add left border with pv-color */
+}
+
+.item.grid {
+  border-left: 8px solid var(--grid-color);
+}
+
+.item.house {
+  border-left: 8px solid var(--house-color);
+}
+
+.item.battery {
+  border-left: 8px solid var(--battery-color);
+}
+
+.item.ev {
+  border-left: 8px solid var(--ev-color);
 }
 
 .header {
@@ -172,12 +192,6 @@ onMounted(() => {
   align-items: center;
 }
 
-.icon-background {
-  background-color: #f0f0f0;
-  border-radius: 50%;
-  padding: 10px;
-}
-
 .q-icon {
   font-size: 20px;
 }
@@ -190,42 +204,42 @@ onMounted(() => {
 
 /* Define color classes */
 .pv-background {
-  background-color: rgba(144, 238, 144, 0.2);
+  background-color: var(--pv-background);
 }
 
 .pv-color {
-  color: green;
+  color: var(--pv-color);
 }
 
 .grid-background {
-  background-color: rgba(239, 182, 188, 0.2);
+  background-color: var(--grid-background);
 }
 
 .grid-color {
-  color: #a33c42;
+  color: var(--grid-color);
 }
 
 .house-background {
-  background-color: rgba(148, 154, 161, 0.2);
+  background-color: var(--house-background);
 }
 
 .house-color {
-  color: #949aa1;
+  color: var(--house-color);
 }
 
 .battery-background {
-  background-color: rgba(181, 166, 71, 0.2);
+  background-color: var(--battery-background);
 }
 
 .battery-color {
-  color: #b5a647;
+  color: var(--battery-color);
 }
 
 .ev-background {
-  background-color: rgba(71, 102, 181, 0.2);
+  background-color: var(--ev-background);
 }
 
 .ev-color {
-  color: #4766b5;
+  color: var(--ev-color);
 }
 </style>
