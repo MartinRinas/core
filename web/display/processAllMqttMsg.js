@@ -21,7 +21,7 @@ function setIframeSource() {
 		var destination = "";
 		if (data["openWB/general/extern"] === true) {
 			// load secondary display (from secondary openWB)
-			const theme = data["openWB/optional/int_display/theme"].type;
+			const theme = data["openWB/optional/int_display/theme"]?.type;
 			switch (data["openWB/general/extern_display_mode"]) {
 				case "local":
 					// host = location.host;
@@ -48,8 +48,13 @@ function setIframeSource() {
 					break;
 			}
 			// load configured display theme from primary or local
-			destination = `${location.protocol}//${host}/openWB/web/display/themes/${theme}/?${query.toString()}`;
-			addLog(`all done, loading theme '${theme}' from primary`);
+			if (theme) {
+				destination = `${location.protocol}//${host}/openWB/web/display/themes/${theme}/?${query.toString()}`;
+				addLog(`all done, loading theme '${theme}' from primary`);
+			} else {
+				destination = `${location.protocol}//${host}/openWB/web/display/?${query.toString()}`;
+				addLog("no configured display theme received yet, fallback to primary wrapper");
+			}
 			// no iframe here as this would result in another nesting with the wrapper on primary
 			setTimeout(() => {
 				location.href = destination;
