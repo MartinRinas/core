@@ -3,6 +3,8 @@ import ipaddress
 import logging
 import re
 import socket
+import concurrent.futures
+import atexit
 import paho.mqtt.publish as publish
 
 from helpermodules.broker import InternalBrokerPublisher
@@ -10,6 +12,9 @@ from helpermodules.broker import InternalBrokerPublisher
 
 log = logging.getLogger(__name__)
 _HOSTNAME_LABEL_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.IGNORECASE)
+_DNS_LOOKUP_TIMEOUT_SECONDS = 2
+_DNS_RESOLVER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+atexit.register(lambda: _DNS_RESOLVER_EXECUTOR.shutdown(wait=True))
 
 
 def _is_valid_hostname_syntax(hostname: str) -> bool:
@@ -48,7 +53,11 @@ def is_allowed_local_hostname(hostname: str) -> bool:
         return False
 
     try:
-        results = socket.getaddrinfo(lowered, None, type=socket.SOCK_STREAM)
+        future = _DNS_RESOLVER_EXECUTOR.submit(socket.getaddrinfo, lowered, None, 0, socket.SOCK_STREAM)
+        results = future.result(timeout=_DNS_LOOKUP_TIMEOUT_SECONDS)
+    except concurrent.futures.TimeoutError:
+        log.warning("Hostname validation timeout for '%s' after %s", lowered, _DNS_LOOKUP_TIMEOUT_SECONDS)
+        return False
     except (socket.gaierror, OSError):
         # mDNS may not be resolvable in all environments (e.g. CI containers),
         # but `.local` hostnames are still intended local targets.
@@ -58,9 +67,9 @@ def is_allowed_local_hostname(hostname: str) -> bool:
         return False
 
     for result in results:
-        ip_address = result[4][0]
+        resolved_ip_str = result[4][0]
         try:
-            resolved_ip = ipaddress.ip_address(ip_address)
+            resolved_ip = ipaddress.ip_address(resolved_ip_str)
         except ValueError:
             return False
         if not (resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local):
@@ -106,7 +115,10 @@ def pub_single(topic, payload, hostname="localhost", port=1883, no_json=False, r
         Kompatibilität mit ISSS, die ramdisk verwenden.
     """
     if not is_allowed_local_hostname(hostname):
-        raise ValueError(f"Invalid non-local hostname for MQTT publish: {hostname!r}")
+        raise ValueError(
+            f"Invalid non-local hostname for MQTT publish: {hostname!r}. "
+            "Only localhost, local/private IPs, and .local mDNS hostnames are allowed."
+        )
 
     if no_json:
         publish.single(topic, payload, hostname=hostname, port=port, retain=retain)

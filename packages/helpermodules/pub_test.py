@@ -20,6 +20,12 @@ def test_is_allowed_local_hostname_allows_mdns_without_resolution(monkeypatch):
     assert pub.is_allowed_local_hostname("envoy.local")
 
 
+def test_is_allowed_local_hostname_allows_mdns_on_gaierror(monkeypatch):
+    mock_getaddrinfo = Mock(side_effect=pub.socket.gaierror("gai lookup failed"))
+    monkeypatch.setattr(pub.socket, "getaddrinfo", mock_getaddrinfo)
+    assert pub.is_allowed_local_hostname("envoy.local")
+
+
 def test_is_allowed_local_hostname_rejects_public_hostname(monkeypatch):
     mock_getaddrinfo = Mock(return_value=[(None, None, None, None, ("8.8.8.8", 0))])
     monkeypatch.setattr(pub.socket, "getaddrinfo", mock_getaddrinfo)
