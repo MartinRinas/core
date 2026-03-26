@@ -129,6 +129,26 @@ class Pub:
 
 
 def pub_single(topic, payload, hostname="localhost", port=1883, no_json=False, retain=True):
+    """Publishes eine einzelne Nachricht an einen Host, der nicht der localhost ist.
+
+        Parameter
+    ---------
+    topic : str
+        Topic, an das gepusht werden soll
+    payload : int, str, list, float
+        Payload, der gepusht werden soll. Nicht als json, da ISSS kein json-Payload verwendet.
+    hostname: str
+        IP des Hosts
+    no_json: bool
+        Kompatibilität mit ISSS, die ramdisk verwenden.
+    """
+    if no_json:
+        publish.single(topic, payload, hostname=hostname, port=port, retain=retain)
+    else:
+        publish.single(topic, json.dumps(payload), hostname=hostname, port=port, retain=retain)
+
+
+def pub_single_validated_local_hostname(topic, payload, hostname="localhost", port=1883, no_json=False, retain=True):
     """ published eine einzelne Nachricht an einen Host, der nicht der localhost ist.
 
         Parameter
@@ -150,12 +170,9 @@ def pub_single(topic, payload, hostname="localhost", port=1883, no_json=False, r
         )
     if not is_allowed_local_hostname(normalized_hostname):
         raise ValueError(
-            f"Invalid non-local hostname for MQTT publish: {hostname!r} (parsed hostname: {normalized_hostname!r}). "
+            f"Invalid hostname for MQTT publish: {hostname!r} (parsed hostname: {normalized_hostname!r}). "
             "Only localhost, local/private IPs, and .local mDNS hostnames are allowed."
         )
     normalized_port = parsed_port if parsed_port is not None else port
 
-    if no_json:
-        publish.single(topic, payload, hostname=normalized_hostname, port=normalized_port, retain=retain)
-    else:
-        publish.single(topic, json.dumps(payload), hostname=normalized_hostname, port=normalized_port, retain=retain)
+    pub_single(topic, payload, hostname=normalized_hostname, port=normalized_port, no_json=no_json, retain=retain)

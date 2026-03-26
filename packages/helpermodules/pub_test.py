@@ -50,18 +50,35 @@ def test_is_allowed_local_hostname_allows_local_url_hostname_part(monkeypatch, h
     assert pub.is_allowed_local_hostname(hostname)
 
 
-def test_pub_single_rejects_non_local_host():
+def test_pub_single_does_not_validate_hostname(monkeypatch):
+    mock_single = Mock()
+    monkeypatch.setattr(pub.publish, "single", mock_single)
+
+    pub.pub_single("openWB/test/topic", {"test": True}, hostname="example.org")
+
+    mock_single.assert_called_once_with(
+        "openWB/test/topic",
+        '{"test": true}',
+        hostname="example.org",
+        port=1883,
+        retain=True,
+    )
+
+
+def test_pub_single_validated_local_hostname_rejects_non_local_host():
     with pytest.raises(ValueError):
-        pub.pub_single("openWB/test/topic", {"test": True}, hostname="example.org")
+        pub.pub_single_validated_local_hostname("openWB/test/topic", {"test": True}, hostname="example.org")
 
 
-def test_pub_single_uses_url_hostname_and_port(monkeypatch):
+def test_pub_single_validated_local_hostname_uses_url_hostname_and_port(monkeypatch):
     mock_single = Mock()
     monkeypatch.setattr(pub.publish, "single", mock_single)
     mock_getaddrinfo = Mock(side_effect=OSError("name lookup failed"))
     monkeypatch.setattr(pub.socket, "getaddrinfo", mock_getaddrinfo)
 
-    pub.pub_single("openWB/test/topic", {"test": True}, hostname="http://evcc.local:7070/something/else")
+    pub.pub_single_validated_local_hostname(
+        "openWB/test/topic", {"test": True}, hostname="http://evcc.local:7070/something/else"
+    )
 
     mock_single.assert_called_once_with(
         "openWB/test/topic",

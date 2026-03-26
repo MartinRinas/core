@@ -25,15 +25,27 @@ class ChargepointModule(AbstractChargepoint):
         with SingleComponentUpdateContext(self.fault_state, update_always=False):
             with self.client_error_context:
                 if self.config.configuration.duo_num == 0:
-                    pub.pub_single("openWB/set/internal_chargepoint/0/data/set_current", current,
-                                   hostname=self.config.configuration.ip_address)
-                    pub.pub_single("openWB/set/isss/Current", current,
-                                   hostname=self.config.configuration.ip_address)
+                    pub.pub_single_validated_local_hostname(
+                        "openWB/set/internal_chargepoint/0/data/set_current",
+                        current,
+                        hostname=self.config.configuration.ip_address
+                    )
+                    pub.pub_single_validated_local_hostname(
+                        "openWB/set/isss/Current",
+                        current,
+                        hostname=self.config.configuration.ip_address
+                    )
                 else:
-                    pub.pub_single("openWB/set/internal_chargepoint/1/data/set_current", current,
-                                   hostname=self.config.configuration.ip_address)
-                    pub.pub_single("openWB/set/isss/Lp2Current", current,
-                                   hostname=self.config.configuration.ip_address)
+                    pub.pub_single_validated_local_hostname(
+                        "openWB/set/internal_chargepoint/1/data/set_current",
+                        current,
+                        hostname=self.config.configuration.ip_address
+                    )
+                    pub.pub_single_validated_local_hostname(
+                        "openWB/set/isss/Lp2Current",
+                        current,
+                        hostname=self.config.configuration.ip_address
+                    )
 
     def get_values(self) -> None:
         with SingleComponentUpdateContext(self.fault_state, update_always=False):
@@ -44,33 +56,60 @@ class ChargepointModule(AbstractChargepoint):
                     my_ip_address = "localhost"
                 else:
                     my_ip_address = data.data.system_data["system"].data["ip_address"]
-                pub.pub_single("openWB/set/internal_chargepoint/global_data",
-                               {"heartbeat": timecheck.create_timestamp(), "parent_ip": my_ip_address},
-                               hostname=ip_address)
-                pub.pub_single("openWB/set/isss/heartbeat", 0, hostname=ip_address)
-                pub.pub_single("openWB/set/isss/parentWB", my_ip_address,
-                               hostname=ip_address, no_json=True)
+                pub.pub_single_validated_local_hostname(
+                    "openWB/set/internal_chargepoint/global_data",
+                    {"heartbeat": timecheck.create_timestamp(), "parent_ip": my_ip_address},
+                    hostname=ip_address
+                )
+                pub.pub_single_validated_local_hostname("openWB/set/isss/heartbeat", 0, hostname=ip_address)
+                pub.pub_single_validated_local_hostname(
+                    "openWB/set/isss/parentWB",
+                    my_ip_address,
+                    hostname=ip_address,
+                    no_json=True
+                )
                 if (self.config.configuration.duo_num == 1):
-                    pub.pub_single("openWB/set/internal_chargepoint/1/data/parent_cp", str(num), hostname=ip_address)
-                    pub.pub_single("openWB/set/isss/parentCPlp2", str(num), hostname=ip_address)
+                    pub.pub_single_validated_local_hostname(
+                        "openWB/set/internal_chargepoint/1/data/parent_cp",
+                        str(num),
+                        hostname=ip_address
+                    )
+                    pub.pub_single_validated_local_hostname(
+                        "openWB/set/isss/parentCPlp2",
+                        str(num),
+                        hostname=ip_address
+                    )
                 else:
-                    pub.pub_single("openWB/set/internal_chargepoint/0/data/parent_cp", str(num), hostname=ip_address)
-                    pub.pub_single("openWB/set/isss/parentCPlp1", str(num), hostname=ip_address)
+                    pub.pub_single_validated_local_hostname(
+                        "openWB/set/internal_chargepoint/0/data/parent_cp",
+                        str(num),
+                        hostname=ip_address
+                    )
+                    pub.pub_single_validated_local_hostname(
+                        "openWB/set/isss/parentCPlp1",
+                        str(num),
+                        hostname=ip_address
+                    )
                 self.client_error_context.reset_error_counter()
 
     def switch_phases(self, phases_to_use: int, duration: int) -> None:
         with SingleComponentUpdateContext(self.fault_state, update_always=False):
             with self.client_error_context:
-                pub.pub_single(
+                pub.pub_single_validated_local_hostname(
                     f"openWB/set/internal_chargepoint/{self.config.configuration.duo_num}/data/phases_to_use",
                     phases_to_use,
-                    self.config.configuration.ip_address)
-                pub.pub_single(
+                    self.config.configuration.ip_address
+                )
+                pub.pub_single_validated_local_hostname(
                     f"openWB/set/internal_chargepoint/{self.config.configuration.duo_num}/data/trigger_phase_switch",
                     True,
-                    self.config.configuration.ip_address)
-                pub.pub_single("openWB/set/isss/U1p3p", phases_to_use,
-                               self.config.configuration.ip_address)
+                    self.config.configuration.ip_address
+                )
+                pub.pub_single_validated_local_hostname(
+                    "openWB/set/isss/U1p3p",
+                    phases_to_use,
+                    self.config.configuration.ip_address
+                )
                 time.sleep(6+duration-1)
 
     def interrupt_cp(self, duration: int) -> None:
@@ -78,21 +117,31 @@ class ChargepointModule(AbstractChargepoint):
             with self.client_error_context:
                 ip_address = self.config.configuration.ip_address
                 if (self.config.configuration.duo_num == 1):
-                    pub.pub_single("openWB/set/internal_chargepoint/1/data/cp_interruption_duration",
-                                   duration, hostname=ip_address)
-                    pub.pub_single("openWB/set/isss/Cpulp2", duration, hostname=ip_address)
+                    pub.pub_single_validated_local_hostname(
+                        "openWB/set/internal_chargepoint/1/data/cp_interruption_duration",
+                        duration,
+                        hostname=ip_address
+                    )
+                    pub.pub_single_validated_local_hostname("openWB/set/isss/Cpulp2", duration, hostname=ip_address)
                 else:
-                    pub.pub_single("openWB/set/internal_chargepoint/0/data/cp_interruption_duration",
-                                   duration, hostname=ip_address)
-                    pub.pub_single("openWB/set/isss/Cpulp1", duration, hostname=ip_address)
+                    pub.pub_single_validated_local_hostname(
+                        "openWB/set/internal_chargepoint/0/data/cp_interruption_duration",
+                        duration,
+                        hostname=ip_address
+                    )
+                    pub.pub_single_validated_local_hostname("openWB/set/isss/Cpulp1", duration, hostname=ip_address)
                 time.sleep(duration)
 
     def clear_rfid(self) -> None:
         with SingleComponentUpdateContext(self.fault_state):
             with self.client_error_context:
                 ip_address = self.config.configuration.ip_address
-                pub.pub_single("openWB/set/isss/ClearRfid", 1, hostname=ip_address)
-                pub.pub_single("openWB/set/internal_chargepoint/last_tag", None, hostname=ip_address)
+                pub.pub_single_validated_local_hostname("openWB/set/isss/ClearRfid", 1, hostname=ip_address)
+                pub.pub_single_validated_local_hostname(
+                    "openWB/set/internal_chargepoint/last_tag",
+                    None,
+                    hostname=ip_address
+                )
 
 
 chargepoint_descriptor = DeviceDescriptor(configuration_factory=OpenWBSeries)
