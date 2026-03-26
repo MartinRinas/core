@@ -80,7 +80,11 @@ def is_allowed_local_hostname(hostname: str) -> bool:
         future = _DNS_RESOLVER_EXECUTOR.submit(socket.getaddrinfo, lowered, None, 0, socket.SOCK_STREAM)
         results = future.result(timeout=_DNS_LOOKUP_TIMEOUT_SECONDS)
     except concurrent.futures.TimeoutError:
-        log.warning("Hostname validation timeout for '%s' after %s", lowered, _DNS_LOOKUP_TIMEOUT_SECONDS)
+        log.warning(
+            "Hostname validation timeout for '%s' after %s seconds - rejecting as non-local",
+            lowered,
+            _DNS_LOOKUP_TIMEOUT_SECONDS
+        )
         return False
     except (socket.gaierror, OSError):
         # mDNS may not be resolvable in all environments (e.g. CI containers),
@@ -139,9 +143,14 @@ def pub_single(topic, payload, hostname="localhost", port=1883, no_json=False, r
         Kompatibilität mit ISSS, die ramdisk verwenden.
     """
     normalized_hostname, parsed_port = _extract_host_and_port(hostname)
-    if not normalized_hostname or not is_allowed_local_hostname(normalized_hostname):
+    if not normalized_hostname:
         raise ValueError(
             f"Invalid non-local hostname for MQTT publish: {hostname!r}. "
+            "Could not extract a hostname from input."
+        )
+    if not is_allowed_local_hostname(normalized_hostname):
+        raise ValueError(
+            f"Invalid non-local hostname for MQTT publish: {hostname!r} (parsed hostname: {normalized_hostname!r}). "
             "Only localhost, local/private IPs, and .local mDNS hostnames are allowed."
         )
     normalized_port = parsed_port if parsed_port is not None else port
