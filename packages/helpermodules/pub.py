@@ -5,6 +5,7 @@ import re
 import socket
 import concurrent.futures
 import atexit
+from urllib.parse import urlsplit
 import paho.mqtt.publish as publish
 
 from helpermodules.broker import InternalBrokerPublisher
@@ -25,6 +26,29 @@ def _is_valid_hostname_syntax(hostname: str) -> bool:
     return all(_HOSTNAME_LABEL_PATTERN.match(label) for label in labels)
 
 
+def _extract_host_and_port(candidate: str):
+    stripped = candidate.strip()
+    if not stripped:
+        return None, None
+
+    parse_like_url = (
+        "://" in stripped or "/" in stripped or stripped.startswith("//") or stripped.count(":") == 1
+    )
+    if parse_like_url:
+        url_candidate = stripped
+        if "://" not in stripped and not stripped.startswith("//"):
+            url_candidate = f"//{stripped}"
+        parsed = urlsplit(url_candidate)
+        if not parsed.hostname:
+            return None, None
+        try:
+            return parsed.hostname, parsed.port
+        except ValueError:
+            return None, None
+
+    return stripped, None
+
+
 def is_allowed_local_hostname(hostname: str) -> bool:
     """Validate local MQTT target hostnames.
 
@@ -35,8 +59,8 @@ def is_allowed_local_hostname(hostname: str) -> bool:
     if not isinstance(hostname, str):
         return False
 
-    candidate = hostname.strip()
-    if not candidate or "://" in candidate or "/" in candidate:
+    candidate, _ = _extract_host_and_port(hostname)
+    if not candidate:
         return False
 
     lowered = candidate.lower()
@@ -114,13 +138,15 @@ def pub_single(topic, payload, hostname="localhost", port=1883, no_json=False, r
     no_json: bool
         Kompatibilität mit ISSS, die ramdisk verwenden.
     """
-    if not is_allowed_local_hostname(hostname):
+    normalized_hostname, parsed_port = _extract_host_and_port(hostname)
+    if not normalized_hostname or not is_allowed_local_hostname(normalized_hostname):
         raise ValueError(
             f"Invalid non-local hostname for MQTT publish: {hostname!r}. "
             "Only localhost, local/private IPs, and .local mDNS hostnames are allowed."
         )
+    normalized_port = parsed_port if parsed_port is not None else port
 
     if no_json:
-        publish.single(topic, payload, hostname=hostname, port=port, retain=retain)
+        publish.single(topic, payload, hostname=normalized_hostname, port=normalized_port, retain=retain)
     else:
-        publish.single(topic, json.dumps(payload), hostname=hostname, port=port, retain=retain)
+        publish.single(topic, json.dumps(payload), hostname=normalized_hostname, port=normalized_port, retain=retain)

@@ -32,10 +32,41 @@ def test_is_allowed_local_hostname_rejects_public_hostname(monkeypatch):
     assert not pub.is_allowed_local_hostname("example.org")
 
 
-def test_is_allowed_local_hostname_rejects_url_like_input():
-    assert not pub.is_allowed_local_hostname("http://example.local/path")
+def test_is_allowed_local_hostname_rejects_public_url_hostname():
+    assert not pub.is_allowed_local_hostname("http://example.org/path")
+
+
+@pytest.mark.parametrize(
+    "hostname",
+    [
+        "http://evcc.local:7070/",
+        "http://evcc.local:7070/something/else",
+        "evcc.local:7070",
+    ],
+)
+def test_is_allowed_local_hostname_allows_local_url_hostname_part(monkeypatch, hostname):
+    mock_getaddrinfo = Mock(side_effect=OSError("name lookup failed"))
+    monkeypatch.setattr(pub.socket, "getaddrinfo", mock_getaddrinfo)
+    assert pub.is_allowed_local_hostname(hostname)
 
 
 def test_pub_single_rejects_non_local_host():
     with pytest.raises(ValueError):
         pub.pub_single("openWB/test/topic", {"test": True}, hostname="example.org")
+
+
+def test_pub_single_uses_url_hostname_and_port(monkeypatch):
+    mock_single = Mock()
+    monkeypatch.setattr(pub.publish, "single", mock_single)
+    mock_getaddrinfo = Mock(side_effect=OSError("name lookup failed"))
+    monkeypatch.setattr(pub.socket, "getaddrinfo", mock_getaddrinfo)
+
+    pub.pub_single("openWB/test/topic", {"test": True}, hostname="http://evcc.local:7070/something/else")
+
+    mock_single.assert_called_once_with(
+        "openWB/test/topic",
+        '{"test": true}',
+        hostname="evcc.local",
+        port=7070,
+        retain=True,
+    )
