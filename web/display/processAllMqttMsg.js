@@ -81,13 +81,16 @@ function setIframeSource() {
 							iframe.classList.remove("hide");
 						}, 2000);
 					} else {
-						addLog(`theme '${theme}' not found on server!`);
+						addLog(`check for theme '${theme}' failed: HTTP ${this.status} at '${destination}'`, true);
 					}
 				}
 			};
 			request.ontimeout = function () {
 				console.warn("onTimeout", this.readyState, this.status);
-				addLog(`check for theme '${theme}' timed out!`);
+				addLog(`check for theme '${theme}' timed out at '${destination}'!`, true);
+			};
+			request.onerror = function () {
+				addLog(`network error checking theme '${theme}' at '${destination}'!`, true);
 			};
 			request.timeout = 2000;
 			console.debug("checking url:", destination);
@@ -95,18 +98,18 @@ function setIframeSource() {
 			request.send();
 		}
 	} else {
-		console.debug("some topics still missing");
+		console.debug("some topics still missing", missingTopicNames());
 	}
 }
 
 function addLog(message, forceDisplay = false) {
 	const logElement = document.getElementById('log');
-	let displayedMessages = logElement.innerHTML.split("\n");
+	let displayedMessages = logElement.textContent.split("\n");
 	if (displayedMessages.length > 25) {
 		displayedMessages.shift();
 	}
 	displayedMessages.push(message);
-	logElement.innerHTML = displayedMessages.join("\n");
+	logElement.textContent = displayedMessages.join("\n");
 	if (forceDisplay) {
 		logElement.classList.remove("hide");
 	}
