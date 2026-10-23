@@ -175,6 +175,27 @@ def version_info():
           "check the installed Apache PHP package against your vendor's security advisory.")
 
 
+def contain_failure():
+    errors = []
+    for action in (install_guard, lambda: run("systemctl", "stop", "apache2.service")):
+        try:
+            action()
+        except (Exception, KeyboardInterrupt) as error:
+            errors.append(str(error))
+    try:
+        stopped = run("systemctl", "show", "--property=ActiveState", "--value", "apache2.service").stdout.strip()
+        if stopped not in {"inactive", "failed"}:
+            errors.append("Apache is not confirmed stopped (state: {}).".format(stopped))
+    except (Exception, KeyboardInterrupt) as error:
+        errors.append(str(error))
+    if errors:
+        print("FAILED: containment cleanup could not be confirmed. Apache may still expose PHP!\n"
+              + "\n".join(errors), file=sys.stderr)
+    else:
+        print("FAILED: Apache is stopped with the PHP deny guard enabled.", file=sys.stderr)
+    print("Rollback state retained. Correct the reported error and rerun this script.", file=sys.stderr)
+
+
 def change(mode):
     disabled = mode == "disable"
     state = read_state()
@@ -199,8 +220,8 @@ def change(mode):
                     raise RuntimeError("Saved PHP module {} is no longer installed; guard retained.".format(module))
         print("WARNING: enabling web PHP restores its attack surface; this does not install a security patch.")
     # A full stop/start, not a graceful reload, removes PHP from existing worker processes.
-    run("systemctl", "stop", "apache2.service")
     try:
+        run("systemctl", "stop", "apache2.service")
         if disabled:
             install_guard()
             for module in sorted(modules()):
@@ -226,10 +247,7 @@ def change(mode):
         if not disabled and state is not None and site_enabled("http-api-ssl") != state["http_api"]:
             raise RuntimeError("Optional PHP HTTP API site does not match the saved configuration.")
     except (Exception, KeyboardInterrupt):
-        run("systemctl", "stop", "apache2.service", check=False)
-        install_guard()
-        print("FAILED: Apache has been left stopped with the PHP deny guard enabled.\n"
-              "Rollback state retained. Correct the reported error and rerun this script.", file=sys.stderr)
+        contain_failure()
         raise
     if not disabled and state is not None:
         (STATE_DIR / "state.json").unlink()

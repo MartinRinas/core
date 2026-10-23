@@ -51,6 +51,8 @@ def appliance(tmp_path, monkeypatch):
             out += "\n" + "\n".join(extra_modules)
         elif args == ("apache2ctl", "-t", "-D", "DUMP_INCLUDES"):
             out = "\n".join(" (1) " + str(p) for p in includes)
+        elif args == ("systemctl", "show", "--property=ActiveState", "--value", "apache2.service"):
+            out = "inactive"
         elif args[0] in {"a2enmod", "a2dismod"}:
             path = apache / "mods-enabled" / (args[1] + ".load")
             path.touch() if args[0] == "a2enmod" else path.unlink()
@@ -116,7 +118,8 @@ def test_alternate_handlers_fail_closed(appliance, handler):
     with pytest.raises(RuntimeError, match="Alternate"):
         php.change("disable")
     assert ("systemctl", "start", "apache2.service") not in appliance.commands
-    assert appliance.commands[-2:] == [("systemctl", "stop", "apache2.service"), ("a2enconf", php.GUARD_NAME)]
+    assert ("a2enconf", php.GUARD_NAME) in appliance.commands
+    assert appliance.commands[-2] == ("systemctl", "stop", "apache2.service")
     assert php.read_state() is not None
 
 
@@ -194,6 +197,41 @@ def test_invalid_state_rejected(appliance):
     with pytest.raises(RuntimeError, match="Invalid rollback state"):
         php.change("enable")
     assert not appliance.commands
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("stop failed"), subprocess.TimeoutExpired("systemctl", 60)])
+def test_initial_stop_failure_still_installs_guard_and_retries(appliance, failure):
+    original = appliance.runner.side_effect
+    stops = []
+
+    def fail_first_stop(*args, **kwargs):
+        if args == ("systemctl", "stop", "apache2.service"):
+            stops.append(args)
+            if len(stops) == 1:
+                raise failure
+        return original(*args, **kwargs)
+
+    appliance.runner.side_effect = fail_first_stop
+    with pytest.raises(type(failure)):
+        php.change("disable")
+    assert len(stops) == 2
+    assert (appliance.apache / "conf-enabled/disable-web-php.conf").exists()
+    assert ("systemctl", "start", "apache2.service") not in appliance.commands
+
+
+def test_cleanup_stop_timeout_does_not_claim_success(appliance, capsys):
+    original = appliance.runner.side_effect
+
+    def stop_timeout(*args, **kwargs):
+        if args[:2] == ("systemctl", "stop"):
+            raise subprocess.TimeoutExpired("systemctl", 60)
+        return original(*args, **kwargs)
+
+    appliance.runner.side_effect = stop_timeout
+    with pytest.raises(subprocess.TimeoutExpired):
+        php.change("disable")
+    assert (appliance.apache / "conf-enabled/disable-web-php.conf").exists()
+    assert "could not be confirmed" in capsys.readouterr().err
 
 
 def test_failed_enable_keeps_guard_and_removes_probe(appliance, monkeypatch):
