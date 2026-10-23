@@ -1,6 +1,6 @@
 #!/bin/bash
 OPENWBBASEDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-# Serialize all configuration changes and restarts with manage_web_php.py.
+# Serialize configuration changes and restarts with the web PHP management scripts.
 sudo mkdir -p /run/openwb-apache || exit 1
 sudo touch /run/openwb-apache/configuration.lock || exit 1
 sudo chmod 755 /run/openwb-apache || exit 1
