@@ -17,7 +17,6 @@ import tempfile
 APACHE = Path("/etc/apache2")
 STATE_DIR = Path("/var/lib/openwb-web-php")
 LOCK_DIR = Path("/run/openwb-apache")
-WEB_ROOT = Path("/var/www/html")
 GUARD_NAME = "disable-web-php"
 GUARD = r'''# Managed by openWB runs/manage_web_php.py
 <FilesMatch "(?i)\.(php[0-9]*|phtml|phar|phps)(\.|$)">
@@ -29,6 +28,11 @@ GUARD = r'''# Managed by openWB runs/manage_web_php.py
 '''
 BASE = Path(__file__).resolve().parent.parent
 PHP_MODULE = re.compile(r"php[0-9]+(?:\.[0-9]+)?")
+SCOPE = (
+    "Prerequisite: standard openWB Apache configuration using Debian mod_php.\n"
+    "Custom sites, includes, .htaccess handler mappings and PHP FPM/CGI require administrator review.\n"
+    "This script does not audit custom configurations; its checks cover only standard openWB endpoints."
+)
 IMPACT = (
     "Web PHP is disabled to contain the PHP2Shell risk, not to patch PHP.\n"
     "Unavailable: restore/migration uploads, PHP CSV export, Tesla/Mercedes authorization,\n"
@@ -92,61 +96,6 @@ def check_handlers(disabled):
     if re.search(r"^\s*(?:cgi|cgid|fcgid|fastcgi|proxy_fcgi|proxy_scgi|actions)_module\s",
                  loaded, re.MULTILINE):
         raise RuntimeError("Alternate CGI/FastCGI handlers found; this script supports mod_php only.")
-    includes = run("apache2ctl", "-t", "-D", "DUMP_INCLUDES").stdout
-    for name in re.findall(r"^\s*\([^)]*\)\s+(/[^\n]+)$", includes, re.MULTILINE):
-        path = Path(name.strip())
-        text = "\n".join(line for line in path.read_text().splitlines() if not line.lstrip().startswith("#"))
-        if re.search(r"(?:fcgi://|php-fpm|php-cgi|^\s*Action\s)", text, re.IGNORECASE | re.MULTILINE):
-            raise RuntimeError("Alternate PHP/CGI handler in {}; administrator review required.".format(path))
-        shipped = BASE / "data/config/apache" / path.name
-        standard_site = (path.resolve() in {
-            p.resolve() for p in (APACHE / "sites-enabled").glob("*.conf")
-        } and shipped.is_file() and path.read_text() == shipped.read_text())
-        if not standard_site and re.search(
-                r"^\s*(?:ProxyPass\w*|ProxyRemote\w*|BalancerMember|RewriteRule)\b|^\s*SetHandler\s+.*proxy:",
-                text, re.IGNORECASE | re.MULTILINE):
-            raise RuntimeError(
-                "Unsupported proxy/rewrite configuration in {}; administrator review required.".format(path))
-
-
-def check_sites():
-    # Only the shipped sites are covered by the loopback checks below.
-    known = {p.name for p in (BASE / "data/config/apache").glob("*.conf")}
-    enabled = list((APACHE / "sites-enabled").glob("*.conf"))
-    if not site_enabled("localhost"):
-        raise RuntimeError("The standard openWB localhost site (port 81) must be enabled.")
-    for path in enabled:
-        shipped = BASE / "data/config/apache" / path.name
-        if path.name not in known or path.read_text() != shipped.read_text():
-            raise RuntimeError("Custom Apache site {} is not supported; administrator review required.".format(path))
-    hosts = run("apache2ctl", "-S").stdout
-    for name in re.findall(r"\((/[^()\n]+):[0-9]+\)", hosts):
-        if Path(name).resolve() not in {p.resolve() for p in enabled}:
-            raise RuntimeError("Virtual host outside the standard enabled sites: " + name)
-
-
-def check_directory_config():
-    def walk_error(error):
-        raise error
-
-    seen = set()
-    configs = {WEB_ROOT.parent / ".htaccess"}
-    for directory, dirs, files in os.walk(WEB_ROOT, followlinks=True, onerror=walk_error):
-        path = Path(directory)
-        resolved = path.resolve()
-        if resolved in seen:
-            dirs[:] = []
-            continue
-        seen.add(resolved)
-        if ".htaccess" in files:
-            configs.add(path / ".htaccess")
-    for path in configs:
-        if not path.exists():
-            continue
-        text = path.read_text()
-        if re.search(r"^\s*(?:AddHandler|AddType|SetHandler|ForceType|Action|RewriteRule|ProxyPass\w*)\b",
-                     text, re.IGNORECASE | re.MULTILINE):
-            raise RuntimeError("Unsupported per-directory handler/proxy mapping in {}; guard retained.".format(path))
 
 
 def urls():
@@ -167,7 +116,6 @@ def http(url):
 
 
 def validate(disabled):
-    run("apache2ctl", "configtest")
     check_handlers(disabled)
     run("systemctl", "is-active", "--quiet", "apache2.service")
     if disabled and site_enabled("http-api-ssl"):
@@ -252,9 +200,11 @@ def apache_lock():
 
 def change(mode):
     disabled = mode == "disable"
+    print(SCOPE)
     state = read_state()
     run("apache2ctl", "configtest")
-    check_sites()
+    if not site_enabled("localhost"):
+        raise RuntimeError("The standard openWB localhost site (port 81) must be enabled.")
     version_info(state)
     if run("systemctl", "is-enabled", "apache2.service", check=False).stdout.strip() in {
             "masked", "masked-runtime"}:
@@ -279,7 +229,6 @@ def change(mode):
     # A full stop/start, not a graceful reload, removes PHP from existing worker processes.
     try:
         run("systemctl", "stop", "apache2.service")
-        check_directory_config()
         if disabled:
             install_guard()
             for module in sorted(modules()):
@@ -292,13 +241,11 @@ def change(mode):
             for module in state["modules"]:
                 run("a2enmod", module)
                 print("Restored Apache module: " + module)
-            check_handlers(False)
             run("a2disconf", GUARD_NAME)
             if state["http_api"]:
                 run("a2ensite", "http-api-ssl")
             elif site_enabled("http-api-ssl"):
                 run("a2dissite", "http-api-ssl")
-        check_sites()
         run("apache2ctl", "configtest")
         check_handlers(disabled)
         run("systemctl", "start", "apache2.service")
@@ -310,19 +257,18 @@ def change(mode):
         raise
     if not disabled and state is not None:
         (STATE_DIR / "state.json").unlink()
-    print("CONFIRMED: web PHP {}.".format("DISABLED" if disabled else "ENABLED"))
+    print("CONFIRMED: web PHP {} on standard openWB endpoints.".format("DISABLED" if disabled else "ENABLED"))
     print(IMPACT if disabled else "Web PHP execution verified; saved module/API configuration restored if present.\n"
           "PHP CLI is unchanged.")
-    charging = run("systemctl", "is-active", "openwb2.service", check=False)
-    print("Charging service openwb2: " + (charging.stdout.strip() or "unknown") + " (not changed).")
-    print("Recheck after appliance updates. Startup/settings integration is not installed;\n"
-          "startup setup may re-enable the API site, but the global PHP deny guard remains enabled.")
+    print("Recheck after appliance updates; startup/settings integration is not installed.")
+    if disabled:
+        print("Startup setup may re-enable the API site, but the global PHP deny guard remains enabled.")
 
 
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
-        epilog=IMPACT + "\nRequires the shipped openWB Apache sites and mod_php, not CGI/FPM or custom vhosts. "
+        epilog=SCOPE + "\n\n" + IMPACT + "\n\n"
         "Run with sudo. Repeated runs revalidate. Enable restores only this script's saved configuration. "
         "Caught failures attempt to stop Apache and reinstate the guard; cleanup errors are reported explicitly. "
         "SIGKILL/power loss during enable is not crash-atomic: rerun disable before restarting Apache. "

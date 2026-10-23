@@ -42,11 +42,8 @@ def appliance(tmp_path, monkeypatch):
     monkeypatch.setattr(php, "APACHE", apache)
     monkeypatch.setattr(php, "STATE_DIR", state)
     monkeypatch.setattr(php, "BASE", base)
-    monkeypatch.setattr(php, "WEB_ROOT", tmp_path / "www")
-    php.WEB_ROOT.mkdir()
     commands = []
     extra_modules = []
-    includes = []
 
     def command(*args, check=True):
         commands.append(args)
@@ -54,8 +51,6 @@ def appliance(tmp_path, monkeypatch):
         if args == ("apache2ctl", "-M"):
             out = "\n".join(" {}_module (shared)".format(m.replace(".", "")) for m in php.modules())
             out += "\n" + "\n".join(extra_modules)
-        elif args == ("apache2ctl", "-t", "-D", "DUMP_INCLUDES"):
-            out = "\n".join(" (1) " + str(p) for p in includes)
         elif args == ("systemctl", "show", "--property=ActiveState", "--value", "apache2.service"):
             out = "inactive"
         elif args[0] in {"a2enmod", "a2dismod"}:
@@ -88,7 +83,7 @@ def appliance(tmp_path, monkeypatch):
     runner = Mock(side_effect=command)
     monkeypatch.setattr(php, "run", runner)
     return SimpleNamespace(apache=apache, state=state, base=base, commands=commands,
-                           extra_modules=extra_modules, includes=includes, runner=runner)
+                           extra_modules=extra_modules, runner=runner)
 
 
 @pytest.mark.parametrize("api_enabled", [False, True])
@@ -126,51 +121,6 @@ def test_alternate_handlers_fail_closed(appliance, handler):
     assert ("a2enconf", php.GUARD_NAME) in appliance.commands
     assert appliance.commands[-2] == ("systemctl", "stop", "apache2.service")
     assert php.read_state() is not None
-
-
-def test_alternate_included_handler(appliance):
-    config = appliance.apache / "custom.conf"
-    config.write_text('SetHandler "proxy:unix:/run/php.sock|fcgi://localhost"\n')
-    appliance.includes.append(config)
-    with pytest.raises(RuntimeError, match="Alternate PHP"):
-        php.change("disable")
-    assert ("systemctl", "start", "apache2.service") not in appliance.commands
-
-
-@pytest.mark.parametrize("directive", [
-    "ProxyPass /external http://backend/extensionless",
-    "RewriteRule ^/external http://backend/extensionless [P,L]",
-    'SetHandler "proxy:http://backend/extensionless"',
-])
-def test_custom_included_proxy_rejected(appliance, directive):
-    config = appliance.apache / "custom.conf"
-    config.write_text(directive)
-    appliance.includes.append(config)
-    with pytest.raises(RuntimeError, match="Unsupported proxy/rewrite"):
-        php.change("disable")
-    assert ("systemctl", "start", "apache2.service") not in appliance.commands
-
-
-@pytest.mark.parametrize("directive", [
-    "AddHandler application/x-httpd-php .inc", "SetHandler application/x-httpd-php",
-    "AddType application/x-httpd-php .inc", "RewriteRule ^x http://backend/php [P]",
-])
-def test_custom_htaccess_rejected_before_unloading_php(appliance, directive):
-    (php.WEB_ROOT / ".htaccess").write_text(directive)
-    original_modules = php.modules()
-    with pytest.raises(RuntimeError, match="Unsupported per-directory"):
-        php.change("disable")
-    assert php.modules() == original_modules
-    assert ("systemctl", "start", "apache2.service") not in appliance.commands
-
-
-def test_htaccess_scans_linked_content_and_handles_cycles(appliance):
-    linked = appliance.base / "web"
-    (linked / ".htaccess").write_text("AddHandler application/x-httpd-php .inc")
-    (php.WEB_ROOT / "openWB").symlink_to(appliance.base, target_is_directory=True)
-    (linked / "cycle").symlink_to(php.WEB_ROOT, target_is_directory=True)
-    with pytest.raises(RuntimeError, match="Unsupported per-directory"):
-        php.change("disable")
 
 
 def test_http_failure_stops_apache_without_printing_source(appliance, monkeypatch, capsys):
@@ -242,17 +192,6 @@ def test_enable_checks_restored_api_state(appliance):
     assert (appliance.apache / "conf-enabled/disable-web-php.conf").exists()
 
 
-def test_modified_available_api_is_rejected_before_restart(appliance):
-    php.change("disable")
-    (appliance.apache / "sites-available/http-api-ssl.conf").write_text("# custom API site")
-    appliance.commands.clear()
-    with pytest.raises(RuntimeError, match="Custom Apache site"):
-        php.change("enable")
-    assert ("systemctl", "start", "apache2.service") not in appliance.commands
-    assert (appliance.apache / "conf-enabled/disable-web-php.conf").exists()
-    assert php.read_state() is not None
-
-
 def test_reports_saved_apache_package_versions_while_disabled(appliance):
     php.change("disable")
     appliance.commands.clear()
@@ -280,12 +219,60 @@ def test_missing_cli_still_reports_saved_apache_package(appliance, capsys):
     assert "7.4-vendor-backport" in capsys.readouterr().out
 
 
-def test_custom_site_is_rejected_before_changes(appliance):
-    (appliance.apache / "sites-enabled/custom.conf").write_text("custom")
-    with pytest.raises(RuntimeError, match="Custom Apache site"):
+def test_missing_standard_localhost_site_is_rejected_before_changes(appliance):
+    (appliance.apache / "sites-enabled/localhost.conf").unlink()
+    with pytest.raises(RuntimeError, match="localhost site"):
         php.change("disable")
     assert not (appliance.state / "state.json").exists()
     assert ("systemctl", "stop", "apache2.service") not in appliance.commands
+
+
+def test_standard_scope_and_operation_order(appliance, capsys):
+    php.change("disable")
+    output = capsys.readouterr().out
+    assert "does not audit custom configurations" in output
+    assert "require administrator review" in output
+    assert "on standard openWB endpoints" in output
+    commands = appliance.commands
+    stop = commands.index(("systemctl", "stop", "apache2.service"))
+    guard = commands.index(("a2enconf", php.GUARD_NAME))
+    unload = commands.index(("a2dismod", "php7.4"))
+    start = commands.index(("systemctl", "start", "apache2.service"))
+    assert stop < guard < unload < start
+    assert commands[start - 2] == ("apache2ctl", "configtest")
+    assert commands[start - 1] == ("apache2ctl", "-M")
+    assert commands.count(("apache2ctl", "configtest")) == 2
+
+
+def test_failed_configuration_check_prevents_restart(appliance):
+    original = appliance.runner.side_effect
+    checks = []
+
+    def invalid_changed_config(*args, **kwargs):
+        if args == ("apache2ctl", "configtest"):
+            checks.append(args)
+            if len(checks) == 2:
+                raise RuntimeError("invalid changed configuration")
+        return original(*args, **kwargs)
+
+    appliance.runner.side_effect = invalid_changed_config
+    with pytest.raises(RuntimeError, match="invalid changed configuration"):
+        php.change("disable")
+    assert ("systemctl", "start", "apache2.service") not in appliance.commands
+    assert (appliance.apache / "conf-enabled/disable-web-php.conf").exists()
+    assert php.read_state() is not None
+
+
+def test_guard_install_failure_still_attempts_stop(appliance, monkeypatch, capsys):
+    def failed_guard():
+        raise OSError("cannot install guard")
+
+    monkeypatch.setattr(php, "install_guard", failed_guard)
+    with pytest.raises(OSError, match="cannot install guard"):
+        php.change("disable")
+    assert appliance.commands.count(("systemctl", "stop", "apache2.service")) == 2
+    assert ("systemctl", "start", "apache2.service") not in appliance.commands
+    assert "could not be confirmed" in capsys.readouterr().err
 
 
 def test_invalid_state_rejected(appliance):
