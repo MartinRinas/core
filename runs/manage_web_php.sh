@@ -15,6 +15,7 @@ usage() {
 	echo "Power loss/SIGKILL during enable is not crash-atomic; rerun disable before restarting Apache."
 }
 die() { echo "ERROR: $* Result NOT confirmed." >&2; exit 1; }
+step() { stage=$*; echo "INFO: $stage"; }
 [[ ${1:-} != --help && ${1:-} != -h ]] || { usage; exit 0; }
 [[ $# == 1 && ( $1 == disable || $1 == enable ) ]] || { usage; exit 1; }
 [[ $EUID == 0 ]] || die "Run with sudo."
@@ -33,6 +34,7 @@ install -d -m 700 "$STATE"
 umask 077
 probe=
 transition=0
+stage=preflight
 guard() {
 	local file="$APACHE/conf-available/$GUARD.conf"
 	# Never overwrite a custom deny rule.
@@ -53,7 +55,8 @@ EOF
 cleanup() {
 	local status=$? failed=0 active
 	trap - EXIT INT TERM
-	(( status == 0 )) || echo "ERROR: operation failed; requested result NOT confirmed." >&2
+	(( status == 0 )) || echo "ERROR: failed during $stage; requested result NOT confirmed." >&2
+	if (( status != 0 && ! transition )); then echo "INFO: Apache/PHP configuration was not changed by this run." >&2; fi
 	if (( status != 0 && transition )); then
 		guard || failed=1
 		timeout 60 systemctl stop apache2.service || failed=1
@@ -83,6 +86,22 @@ modules() {
 		echo "$name"
 	done
 }
+module_diagnostics() {
+	local directory loaded
+	echo "DIAGNOSTIC: recognized enabled PHP modules: ${saved[*]:-(none)}" >&2
+	echo "DIAGNOSTIC: looking for php<number>[.<number>].load; symlinks must resolve." >&2
+	for directory in mods-enabled mods-available; do
+		echo "DIAGNOSTIC: $APACHE/$directory PHP entries (name -> symlink target):" >&2
+		find "$APACHE/$directory" -maxdepth 1 -iname '*php*' -printf '  %f -> %l\n' >&2 || true
+	done
+	echo "DIAGNOSTIC: Apache PHP/CGI module report:" >&2
+	if loaded=$(apache2ctl -M); then
+		grep -Ei 'php|cgi|actions' <<<"$loaded" >&2 || echo "  (no PHP/CGI modules reported)" >&2
+	else
+		echo "  Unable to query Apache modules." >&2
+	fi
+	echo "DIAGNOSTIC: HTTP 403 alone does not prove mod_php is unloaded; no module will be guessed." >&2
+}
 check_modules() {
 	local loaded
 	loaded=$(apache2ctl -M)
@@ -94,18 +113,28 @@ check_modules() {
 		grep -Eq '^[[:space:]]*php[^[:space:]]*_module' <<<"$loaded" || die "No PHP module is loaded."
 	fi
 }
+step "checking Apache configuration and validation endpoints"
 apache2ctl configtest
 urls=()
 if enabled localhost; then urls+=(http://127.0.0.1:81); fi
 if enabled 000-default; then urls+=(http://127.0.0.1); fi
 if enabled apache-openwb-ssl; then urls+=(https://127.0.0.1); fi
 (( ${#urls[@]} )) || die "No standard openWB website enabled for HTTP validation (localhost, 000-default or apache-openwb-ssl)."
+echo "INFO: validation endpoints: ${urls[*]}"
 [[ $(systemctl is-enabled apache2.service || true) != masked* ]] || die "Apache is masked."
 systemctl is-active --quiet apache2.service || die "Apache is stopped; start it explicitly before live validation."
+step "detecting PHP modules and rollback state"
+if [[ -e $APACHE/conf-enabled/$GUARD.conf ]]; then
+	echo "INFO: PHP deny guard is already enabled; HTTP 403 may be due to this existing rule."
+else
+	echo "INFO: PHP deny guard is not enabled."
+fi
 mapfile -t saved < <(modules)
+echo "INFO: recognized enabled PHP modules: ${saved[*]:-(none)}"
 api=false
 enabled http-api-ssl && api=true
 if [[ -e $STATE/state ]]; then
+	echo "INFO: reading saved module/API state from $STATE/state"
 	mapfile -t saved <"$STATE/state"
 	api=${saved[0]:-invalid}; saved=("${saved[@]:1}")
 	[[ $api == true || $api == false ]] || die "Invalid saved API state."
@@ -113,7 +142,10 @@ else
 	if [[ $mode == enable ]]; then
 		[[ ! -e $APACHE/conf-enabled/$GUARD.conf ]] || die "No Bash rollback state; guard retained."
 	fi
-	(( ${#saved[@]} )) || die "No enabled Debian mod_php module found."
+	if (( ! ${#saved[@]} )); then
+		module_diagnostics
+		die "No enabled Debian mod_php module found. PHP may already be disabled or use a different handler/name."
+	fi
 	printf '%s\n' "$api" "${saved[@]}" >"$STATE/state.tmp"
 	mv "$STATE/state.tmp" "$STATE/state"
 fi
@@ -127,6 +159,7 @@ php -n -v 2>/dev/null | head -n 1 || true
 echo "PHP2Shell patch status: UNKNOWN; check your vendor advisory for backports."
 [[ $mode != enable ]] || echo "WARNING: enabling web PHP restores its attack surface; this is not a security patch."
 transition=1
+step "stopping Apache and applying PHP $mode"
 timeout 60 systemctl stop apache2.service
 if [[ $mode == disable ]]; then
 	guard
@@ -139,9 +172,11 @@ else
 	if [[ $api == true ]]; then a2ensite http-api-ssl
 	elif enabled http-api-ssl; then a2dissite http-api-ssl; fi
 fi
+step "checking changed configuration before starting Apache"
 apache2ctl configtest
 check_modules
 timeout 60 systemctl start apache2.service
+step "validating running Apache and PHP $mode"
 systemctl is-active --quiet apache2.service
 check_modules
 if [[ $mode == disable ]]; then
@@ -158,6 +193,7 @@ if [[ $mode == enable ]]; then
 	chmod 644 "$probe"
 fi
 for url in "${urls[@]}"; do
+	step "checking static website and PHP response at $url"
 	[[ $(curl_local -o /dev/null -w '%{http_code}' "$url/openWB/index.html") == 200 ]] ||
 		die "Static website check failed at $url."
 	if [[ $mode == disable ]]; then

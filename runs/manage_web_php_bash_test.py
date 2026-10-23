@@ -123,6 +123,45 @@ def test_round_trip_repeated_runs_and_order(appliance, api):
     assert all("openwb2" not in call and "php -f" not in call for call in calls)
 
 
+@pytest.mark.parametrize("entry", [None, "php.load", "php7.4.load"])
+def test_missing_recognized_modules_prints_diagnostics_without_changes(appliance, entry):
+    enabled_dir = appliance / "apache/mods-enabled"
+    for module in enabled_dir.glob("*.load"):
+        module.unlink()
+    if entry == "php.load":
+        (enabled_dir / entry).touch()
+    elif entry:
+        (enabled_dir / entry).symlink_to("../mods-available/missing-php.load")
+    result = invoke(appliance, "disable")
+    assert result.returncode != 0
+    assert "DIAGNOSTIC: recognized enabled PHP modules: (none)" in result.stderr
+    assert "mods-enabled PHP entries" in result.stderr
+    assert "mods-available PHP entries" in result.stderr
+    assert "Apache PHP/CGI module report" in result.stderr
+    assert "HTTP 403 alone does not prove mod_php is unloaded" in result.stderr
+    assert "failed during detecting PHP modules and rollback state" in result.stderr
+    assert "configuration was not changed by this run" in result.stderr
+    if entry:
+        assert entry in result.stderr
+    if entry == "php.load":
+        assert "php_module (shared)" in result.stderr
+    if entry == "php7.4.load":
+        assert "../mods-available/missing-php.load" in result.stderr
+    assert not (appliance / "state/state").exists()
+    assert "systemctl stop" not in (appliance / "commands").read_text()
+
+
+def test_existing_guard_is_reported_when_php_is_already_disabled(appliance):
+    assert invoke(appliance, "disable").returncode == 0
+    # Reproduce blocking without this script's saved state; never invent rollback modules.
+    (appliance / "state/state").unlink()
+    result = invoke(appliance, "disable")
+    assert result.returncode != 0
+    assert "PHP deny guard is already enabled" in result.stdout
+    assert "HTTP 403 may be due to this existing rule" in result.stdout
+    assert "No enabled Debian mod_php module found" in result.stderr
+
+
 @pytest.mark.parametrize("sites, expected_urls", [
     (["000-default"], ["http://127.0.0.1"]),
     (["apache-openwb-ssl", "apache-redirect-ssl"], ["https://127.0.0.1"]),
@@ -171,6 +210,9 @@ def test_failures_attempt_containment(appliance, failure):
     calls = (appliance / "commands").read_text()
     assert "systemctl stop apache2.service" in calls
     assert "a2enconf disable-web-php" in calls
+    assert "failed during" in result.stderr
+    if failure == "fail-http":
+        assert "checking static website and PHP response at http://127.0.0.1:81" in result.stderr
 
 
 def test_failed_enable_keeps_state_and_cleans_probe(appliance):
