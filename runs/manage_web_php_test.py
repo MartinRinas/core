@@ -25,7 +25,8 @@ def appliance(tmp_path, monkeypatch):
     apache = tmp_path / "apache"
     state = tmp_path / "state"
     base = tmp_path / "openWB"
-    for directory in ("mods-enabled", "mods-available", "sites-enabled", "conf-available", "conf-enabled"):
+    for directory in ("mods-enabled", "mods-available", "sites-enabled", "sites-available",
+                      "conf-available", "conf-enabled"):
         (apache / directory).mkdir(parents=True)
     state.mkdir()
     (base / "web").mkdir(parents=True)
@@ -33,6 +34,7 @@ def appliance(tmp_path, monkeypatch):
     for name in ("localhost", "000-default", "apache-openwb-ssl", "http-api-ssl"):
         text = "# standard " + name
         (base / "data/config/apache" / (name + ".conf")).write_text(text)
+        (apache / "sites-available" / (name + ".conf")).write_text(text)
         (apache / "sites-enabled" / (name + ".conf")).write_text(text)
     for name in ("php7.4", "php8.2"):
         (apache / "mods-available" / (name + ".load")).touch()
@@ -62,7 +64,7 @@ def appliance(tmp_path, monkeypatch):
         elif args[0] in {"a2ensite", "a2dissite"}:
             path = apache / "sites-enabled" / (args[1] + ".conf")
             if args[0] == "a2ensite":
-                path.write_text((base / "data/config/apache" / path.name).read_text())
+                path.write_text((apache / "sites-available" / path.name).read_text())
             else:
                 path.unlink()
         elif args[0] in {"a2enconf", "a2disconf"}:
@@ -198,6 +200,23 @@ def test_no_state_does_not_guess_module(appliance):
     assert ("systemctl", "stop", "apache2.service") not in appliance.commands
 
 
+@pytest.mark.parametrize("mode", ["enable", "disable"])
+def test_inactive_apache_is_not_started_or_modified(appliance, mode):
+    original = appliance.runner.side_effect
+
+    def inactive(*args, **kwargs):
+        if args == ("systemctl", "is-active", "--quiet", "apache2.service"):
+            return SimpleNamespace(returncode=3, stdout="inactive", stderr="")
+        return original(*args, **kwargs)
+
+    appliance.runner.side_effect = inactive
+    with pytest.raises(RuntimeError, match="will not start a deliberately stopped"):
+        php.change(mode)
+    assert not (appliance.state / "state.json").exists()
+    assert ("systemctl", "start", "apache2.service") not in appliance.commands
+    assert ("systemctl", "stop", "apache2.service") not in appliance.commands
+
+
 def test_enable_preserves_previously_disabled_api_after_external_change(appliance):
     (appliance.apache / "sites-enabled/http-api-ssl.conf").unlink()
     php.change("disable")
@@ -221,6 +240,44 @@ def test_enable_checks_restored_api_state(appliance):
         php.change("enable")
     assert php.read_state() is not None
     assert (appliance.apache / "conf-enabled/disable-web-php.conf").exists()
+
+
+def test_modified_available_api_is_rejected_before_restart(appliance):
+    php.change("disable")
+    (appliance.apache / "sites-available/http-api-ssl.conf").write_text("# custom API site")
+    appliance.commands.clear()
+    with pytest.raises(RuntimeError, match="Custom Apache site"):
+        php.change("enable")
+    assert ("systemctl", "start", "apache2.service") not in appliance.commands
+    assert (appliance.apache / "conf-enabled/disable-web-php.conf").exists()
+    assert php.read_state() is not None
+
+
+def test_reports_saved_apache_package_versions_while_disabled(appliance):
+    php.change("disable")
+    appliance.commands.clear()
+    php.change("disable")
+    for module in php.read_state()["modules"]:
+        assert ("dpkg-query", "-W", "-f=${Version}", "libapache2-mod-" + module) in appliance.commands
+    appliance.commands.clear()
+    php.change("enable")
+    for module in ("php7.4", "php8.2"):
+        assert ("dpkg-query", "-W", "-f=${Version}", "libapache2-mod-" + module) in appliance.commands
+
+
+def test_missing_cli_still_reports_saved_apache_package(appliance, capsys):
+    original = appliance.runner.side_effect
+
+    def missing_cli(*args, **kwargs):
+        if args[0] == "php":
+            raise FileNotFoundError("php")
+        if args[0] == "dpkg-query":
+            return SimpleNamespace(returncode=0, stdout="7.4-vendor-backport", stderr="")
+        return original(*args, **kwargs)
+
+    appliance.runner.side_effect = missing_cli
+    php.version_info({"modules": ["php7.4"], "http_api": False})
+    assert "7.4-vendor-backport" in capsys.readouterr().out
 
 
 def test_custom_site_is_rejected_before_changes(appliance):

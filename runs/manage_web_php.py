@@ -197,16 +197,22 @@ def validate(disabled):
             probe.unlink()
 
 
-def version_info():
+def version_info(state=None):
     try:
         result = run("php", "-n", "-v", check=False)
         print("Installed PHP CLI: " + (result.stdout.splitlines()[0] if result.stdout else "unavailable"))
-        for module in sorted(modules()):
+    except (OSError, subprocess.TimeoutExpired):
+        print("Installed PHP CLI version: unavailable.")
+    installed = modules() | set(state["modules"] if state else [])
+    for module in sorted(installed):
+        try:
             package = run("dpkg-query", "-W", "-f=${Version}", "libapache2-mod-" + module, check=False)
             if package.returncode == 0:
                 print("Apache {} package: {}".format(module, package.stdout))
-    except (OSError, subprocess.TimeoutExpired):
-        print("Installed PHP version: unavailable.")
+            else:
+                print("Apache {} package version: unavailable.".format(module))
+        except (OSError, subprocess.TimeoutExpired):
+            print("Apache {} package version: unavailable.".format(module))
     print("PHP2Shell patch status: UNKNOWN. Version strings do not prove vendor backports;\n"
           "check the installed Apache PHP package against your vendor's security advisory.")
 
@@ -249,10 +255,13 @@ def change(mode):
     state = read_state()
     run("apache2ctl", "configtest")
     check_sites()
-    version_info()
+    version_info(state)
     if run("systemctl", "is-enabled", "apache2.service", check=False).stdout.strip() in {
             "masked", "masked-runtime"}:
         raise RuntimeError("Apache is masked. Deliberately unmask it before using this script.")
+    if run("systemctl", "is-active", "--quiet", "apache2.service", check=False).returncode:
+        raise RuntimeError("Apache is not active; no configuration changed. This script will not start a deliberately "
+                           "stopped service. Start Apache explicitly when appropriate, then rerun for HTTP validation.")
     if disabled and state is None:
         if not modules():
             raise RuntimeError("No enabled Debian mod_php module found; cannot save a reversible configuration.")
@@ -289,6 +298,7 @@ def change(mode):
                 run("a2ensite", "http-api-ssl")
             elif site_enabled("http-api-ssl"):
                 run("a2dissite", "http-api-ssl")
+        check_sites()
         run("apache2ctl", "configtest")
         check_handlers(disabled)
         run("systemctl", "start", "apache2.service")
