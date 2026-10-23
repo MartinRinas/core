@@ -2,6 +2,7 @@
 """Reversibly contain web PHP on Debian/openWB; PHP CLI is never disabled."""
 
 import argparse
+from contextlib import contextmanager
 import fcntl
 import json
 import os
@@ -15,6 +16,8 @@ import tempfile
 
 APACHE = Path("/etc/apache2")
 STATE_DIR = Path("/var/lib/openwb-web-php")
+LOCK_DIR = Path("/run/openwb-apache")
+WEB_ROOT = Path("/var/www/html")
 GUARD_NAME = "disable-web-php"
 GUARD = r'''# Managed by openWB runs/manage_web_php.py
 <FilesMatch "(?i)\.(php[0-9]*|phtml|phar|phps)(\.|$)">
@@ -95,6 +98,15 @@ def check_handlers(disabled):
         text = "\n".join(line for line in path.read_text().splitlines() if not line.lstrip().startswith("#"))
         if re.search(r"(?:fcgi://|php-fpm|php-cgi|^\s*Action\s)", text, re.IGNORECASE | re.MULTILINE):
             raise RuntimeError("Alternate PHP/CGI handler in {}; administrator review required.".format(path))
+        shipped = BASE / "data/config/apache" / path.name
+        standard_site = (path.resolve() in {
+            p.resolve() for p in (APACHE / "sites-enabled").glob("*.conf")
+        } and shipped.is_file() and path.read_text() == shipped.read_text())
+        if not standard_site and re.search(
+                r"^\s*(?:ProxyPass\w*|ProxyRemote\w*|BalancerMember|RewriteRule)\b|^\s*SetHandler\s+.*proxy:",
+                text, re.IGNORECASE | re.MULTILINE):
+            raise RuntimeError(
+                "Unsupported proxy/rewrite configuration in {}; administrator review required.".format(path))
 
 
 def check_sites():
@@ -111,6 +123,30 @@ def check_sites():
     for name in re.findall(r"\((/[^()\n]+):[0-9]+\)", hosts):
         if Path(name).resolve() not in {p.resolve() for p in enabled}:
             raise RuntimeError("Virtual host outside the standard enabled sites: " + name)
+
+
+def check_directory_config():
+    def walk_error(error):
+        raise error
+
+    seen = set()
+    configs = {WEB_ROOT.parent / ".htaccess"}
+    for directory, dirs, files in os.walk(WEB_ROOT, followlinks=True, onerror=walk_error):
+        path = Path(directory)
+        resolved = path.resolve()
+        if resolved in seen:
+            dirs[:] = []
+            continue
+        seen.add(resolved)
+        if ".htaccess" in files:
+            configs.add(path / ".htaccess")
+    for path in configs:
+        if not path.exists():
+            continue
+        text = path.read_text()
+        if re.search(r"^\s*(?:AddHandler|AddType|SetHandler|ForceType|Action|RewriteRule|ProxyPass\w*)\b",
+                     text, re.IGNORECASE | re.MULTILINE):
+            raise RuntimeError("Unsupported per-directory handler/proxy mapping in {}; guard retained.".format(path))
 
 
 def urls():
@@ -196,6 +232,18 @@ def contain_failure():
     print("Rollback state retained. Correct the reported error and rerun this script.", file=sys.stderr)
 
 
+@contextmanager
+def apache_lock():
+    LOCK_DIR.mkdir(mode=0o755, exist_ok=True)
+    LOCK_DIR.chmod(0o755)
+    path = LOCK_DIR / "configuration.lock"
+    path.touch(mode=0o644, exist_ok=True)
+    path.chmod(0o644)
+    with path.open("r") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
 def change(mode):
     disabled = mode == "disable"
     state = read_state()
@@ -222,6 +270,7 @@ def change(mode):
     # A full stop/start, not a graceful reload, removes PHP from existing worker processes.
     try:
         run("systemctl", "stop", "apache2.service")
+        check_directory_config()
         if disabled:
             install_guard()
             for module in sorted(modules()):
@@ -265,7 +314,9 @@ def main():
         description=__doc__,
         epilog=IMPACT + "\nRequires the shipped openWB Apache sites and mod_php, not CGI/FPM or custom vhosts. "
         "Run with sudo. Repeated runs revalidate. Enable restores only this script's saved configuration. "
-        "Any failed post-change check leaves Apache stopped. No startup/UI changes are made.",
+        "Caught failures attempt to stop Apache and reinstate the guard; cleanup errors are reported explicitly. "
+        "SIGKILL/power loss during enable is not crash-atomic: rerun disable before restarting Apache. "
+        "No startup recovery/UI changes are made.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("mode", choices=("enable", "disable"))
     args = parser.parse_args()
@@ -281,8 +332,7 @@ def main():
         info = STATE_DIR.lstat()
         if STATE_DIR.is_symlink() or info.st_uid != 0 or info.st_mode & 0o077:
             raise RuntimeError("Rollback directory must be root-owned, private and not a symlink.")
-        with (STATE_DIR / "lock").open("w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with apache_lock():
             change(args.mode)
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:

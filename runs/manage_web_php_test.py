@@ -1,4 +1,5 @@
 import importlib.util
+import fcntl
 import os
 from pathlib import Path
 import shutil
@@ -39,6 +40,8 @@ def appliance(tmp_path, monkeypatch):
     monkeypatch.setattr(php, "APACHE", apache)
     monkeypatch.setattr(php, "STATE_DIR", state)
     monkeypatch.setattr(php, "BASE", base)
+    monkeypatch.setattr(php, "WEB_ROOT", tmp_path / "www")
+    php.WEB_ROOT.mkdir()
     commands = []
     extra_modules = []
     includes = []
@@ -130,6 +133,42 @@ def test_alternate_included_handler(appliance):
     with pytest.raises(RuntimeError, match="Alternate PHP"):
         php.change("disable")
     assert ("systemctl", "start", "apache2.service") not in appliance.commands
+
+
+@pytest.mark.parametrize("directive", [
+    "ProxyPass /external http://backend/extensionless",
+    "RewriteRule ^/external http://backend/extensionless [P,L]",
+    'SetHandler "proxy:http://backend/extensionless"',
+])
+def test_custom_included_proxy_rejected(appliance, directive):
+    config = appliance.apache / "custom.conf"
+    config.write_text(directive)
+    appliance.includes.append(config)
+    with pytest.raises(RuntimeError, match="Unsupported proxy/rewrite"):
+        php.change("disable")
+    assert ("systemctl", "start", "apache2.service") not in appliance.commands
+
+
+@pytest.mark.parametrize("directive", [
+    "AddHandler application/x-httpd-php .inc", "SetHandler application/x-httpd-php",
+    "AddType application/x-httpd-php .inc", "RewriteRule ^x http://backend/php [P]",
+])
+def test_custom_htaccess_rejected_before_unloading_php(appliance, directive):
+    (php.WEB_ROOT / ".htaccess").write_text(directive)
+    original_modules = php.modules()
+    with pytest.raises(RuntimeError, match="Unsupported per-directory"):
+        php.change("disable")
+    assert php.modules() == original_modules
+    assert ("systemctl", "start", "apache2.service") not in appliance.commands
+
+
+def test_htaccess_scans_linked_content_and_handles_cycles(appliance):
+    linked = appliance.base / "web"
+    (linked / ".htaccess").write_text("AddHandler application/x-httpd-php .inc")
+    (php.WEB_ROOT / "openWB").symlink_to(appliance.base, target_is_directory=True)
+    (linked / "cycle").symlink_to(php.WEB_ROOT, target_is_directory=True)
+    with pytest.raises(RuntimeError, match="Unsupported per-directory"):
+        php.change("disable")
 
 
 def test_http_failure_stops_apache_without_printing_source(appliance, monkeypatch, capsys):
@@ -232,6 +271,17 @@ def test_cleanup_stop_timeout_does_not_claim_success(appliance, capsys):
         php.change("disable")
     assert (appliance.apache / "conf-enabled/disable-web-php.conf").exists()
     assert "could not be confirmed" in capsys.readouterr().err
+
+
+def test_shared_apache_lock_matches_setup_script(tmp_path, monkeypatch):
+    monkeypatch.setattr(php, "LOCK_DIR", tmp_path / "lock")
+    setup = Path(__file__).with_name("setup_apache2.sh").read_text()
+    assert "exec 9</run/openwb-apache/configuration.lock" in setup
+    assert setup.index("flock --exclusive 9") < setup.index("restartService=0")
+    with php.apache_lock():
+        with (php.LOCK_DIR / "configuration.lock").open("r") as other:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 def test_failed_enable_keeps_guard_and_removes_probe(appliance, monkeypatch):
