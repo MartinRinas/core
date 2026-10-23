@@ -87,7 +87,6 @@ esac
     text = text.replace('BASE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)', 'BASE="$ROOT"')
     for original, replacement in (
         ("/etc/apache2", str(apache)), ("/var/lib/openwb-web-php-bash", str(root / "state")),
-        ("/var/lib/openwb-web-php/state.json", str(root / "python-state.json")),
         ("/run/openwb-apache", str(root / "lock")),
     ):
         text = text.replace(original, replacement)
@@ -182,14 +181,6 @@ def test_invalid_saved_state_is_not_executed(appliance):
     assert result.returncode != 0
     assert "Invalid saved PHP module" in result.stderr
     assert not (appliance / "malicious").exists()
-
-
-def test_python_state_conflict_is_refused(appliance):
-    (appliance / "python-state.json").write_text("{}")
-    result = invoke(appliance, "disable")
-    assert result.returncode != 0
-    assert "restore with Python first" in result.stderr
-    assert not (appliance / "commands").exists()
 
 
 def test_missing_saved_module_keeps_guard(appliance):

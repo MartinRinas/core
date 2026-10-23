@@ -11,7 +11,7 @@ usage() {
 	echo "Usage: sudo $0 disable|enable"
 	echo "Standard openWB Debian mod_php only; custom Apache/FPM/CGI setups need administrator review."
 	echo "PHP CLI and charging services are unchanged. Recheck after updates; no startup/UI integration."
-	echo "Enable restores saved modules/API state. Do not alternate with the Python version."
+	echo "Enable restores saved modules/API state."
 	echo "Power loss/SIGKILL during enable is not crash-atomic; rerun disable before restarting Apache."
 }
 die() { echo "ERROR: $* Result NOT confirmed." >&2; exit 1; }
@@ -27,7 +27,6 @@ touch "$sudo_lock/configuration.lock"
 chmod 644 "$sudo_lock/configuration.lock"
 exec 9<"$sudo_lock/configuration.lock"
 flock --exclusive 9
-[[ ! -e /var/lib/openwb-web-php/state.json ]] || die "Python rollback state exists; restore with Python first."
 [[ ! -L $STATE ]] || die "State directory must not be a symlink."
 install -d -m 700 "$STATE"
 [[ $(stat -c %u "$STATE") == 0 ]] || die "State directory must be root-owned."
@@ -36,10 +35,10 @@ probe=
 transition=0
 guard() {
 	local file="$APACHE/conf-available/$GUARD.conf"
-	# Keep the same deny rule as the Python alternative, but never overwrite a custom rule.
+	# Never overwrite a custom deny rule.
 	[[ ! -L $file ]] || return 1
 	cat >"$STATE/guard.tmp" <<'EOF' || return 1
-# Managed by openWB runs/manage_web_php.py
+# Managed by openWB runs/manage_web_php.sh
 <FilesMatch "(?i)\.(php[0-9]*|phtml|phar|phps)(\.|$)">
     Require all denied
 </FilesMatch>
