@@ -123,6 +123,38 @@ def test_round_trip_repeated_runs_and_order(appliance, api):
     assert all("openwb2" not in call and "php -f" not in call for call in calls)
 
 
+@pytest.mark.parametrize("sites, expected_urls", [
+    (["000-default"], ["http://127.0.0.1"]),
+    (["apache-openwb-ssl", "apache-redirect-ssl"], ["https://127.0.0.1"]),
+    (["localhost"], ["http://127.0.0.1:81"]),
+    (["000-default", "apache-openwb-ssl"], ["http://127.0.0.1", "https://127.0.0.1"]),
+])
+def test_validates_available_sites_without_requiring_localhost(appliance, sites, expected_urls):
+    for site in (appliance / "apache/sites-enabled").glob("*.conf"):
+        site.unlink()
+    for site in sites:
+        (appliance / "apache/sites-enabled" / (site + ".conf")).touch()
+    for mode in ("disable", "enable"):
+        result = invoke(appliance, mode)
+        assert result.returncode == 0, result.stdout + result.stderr
+        checks = [line.split(": static")[0] for line in result.stdout.splitlines() if line.startswith("CHECK ")]
+        assert checks == ["CHECK " + url for url in expected_urls]
+    assert not (appliance / "state/state").exists()
+
+
+def test_no_standard_validation_site_fails_before_changes(appliance):
+    for site in (appliance / "apache/sites-enabled").glob("*.conf"):
+        site.unlink()
+    # A redirect-only listener cannot validate static serving or PHP denial.
+    (appliance / "apache/sites-enabled/apache-redirect-ssl.conf").touch()
+    result = invoke(appliance, "disable")
+    assert result.returncode != 0
+    assert "No standard openWB website enabled" in result.stderr
+    assert "systemctl stop" not in (appliance / "commands").read_text()
+    assert not (appliance / "state/state").exists()
+    assert (appliance / "active").exists()
+
+
 @pytest.mark.parametrize("failure", ["fail-http", "alternate", "fail-config", "fail-stop", "fail-guard"])
 def test_failures_attempt_containment(appliance, failure):
     (appliance / failure).touch()

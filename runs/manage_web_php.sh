@@ -95,7 +95,11 @@ check_modules() {
 	fi
 }
 apache2ctl configtest
-enabled localhost || die "Standard localhost site (port 81) is required."
+urls=()
+if enabled localhost; then urls+=(http://127.0.0.1:81); fi
+if enabled 000-default; then urls+=(http://127.0.0.1); fi
+if enabled apache-openwb-ssl; then urls+=(https://127.0.0.1); fi
+(( ${#urls[@]} )) || die "No standard openWB website enabled for HTTP validation (localhost, 000-default or apache-openwb-ssl)."
 [[ $(systemctl is-enabled apache2.service || true) != masked* ]] || die "Apache is masked."
 systemctl is-active --quiet apache2.service || die "Apache is stopped; start it explicitly before live validation."
 mapfile -t saved < <(modules)
@@ -146,9 +150,6 @@ else
 	if [[ $api == true ]]; then enabled http-api-ssl || die "PHP API site was not restored."
 	elif enabled http-api-ssl; then die "PHP API site should be disabled."; fi
 fi
-urls=(http://127.0.0.1:81)
-if enabled 000-default; then urls+=(http://127.0.0.1); fi
-if enabled apache-openwb-ssl; then urls+=(https://127.0.0.1); fi
 curl_local() { curl -ksS --noproxy '*' --connect-timeout 5 --max-time 10 "$@"; }
 if [[ $mode == enable ]]; then
 	probe=$(mktemp "$BASE/web/openwb-php-check-XXXXXX.php")
