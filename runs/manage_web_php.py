@@ -212,14 +212,19 @@ def change(mode):
         elif state is not None:
             for module in state["modules"]:
                 run("a2enmod", module)
+                print("Restored Apache module: " + module)
             check_handlers(False)
             run("a2disconf", GUARD_NAME)
             if state["http_api"]:
                 run("a2ensite", "http-api-ssl")
+            elif site_enabled("http-api-ssl"):
+                run("a2dissite", "http-api-ssl")
         run("apache2ctl", "configtest")
         check_handlers(disabled)
         run("systemctl", "start", "apache2.service")
         validate(disabled)
+        if not disabled and state is not None and site_enabled("http-api-ssl") != state["http_api"]:
+            raise RuntimeError("Optional PHP HTTP API site does not match the saved configuration.")
     except (Exception, KeyboardInterrupt):
         run("systemctl", "stop", "apache2.service", check=False)
         install_guard()

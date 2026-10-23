@@ -1,7 +1,15 @@
 import importlib.util
+import os
 from pathlib import Path
+import shutil
+import socket
+import subprocess
+import tempfile
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
+from urllib.error import HTTPError, URLError
+from urllib.request import ProxyHandler, build_opener
 
 import pytest
 
@@ -148,6 +156,31 @@ def test_no_state_does_not_guess_module(appliance):
     assert ("systemctl", "stop", "apache2.service") not in appliance.commands
 
 
+def test_enable_preserves_previously_disabled_api_after_external_change(appliance):
+    (appliance.apache / "sites-enabled/http-api-ssl.conf").unlink()
+    php.change("disable")
+    path = appliance.apache / "sites-enabled/http-api-ssl.conf"
+    path.write_text((appliance.base / "data/config/apache/http-api-ssl.conf").read_text())
+    php.change("enable")
+    assert not php.site_enabled("http-api-ssl")
+
+
+def test_enable_checks_restored_api_state(appliance):
+    php.change("disable")
+    original = appliance.runner.side_effect
+
+    def failed_restore(*args, **kwargs):
+        if args == ("a2ensite", "http-api-ssl"):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return original(*args, **kwargs)
+
+    appliance.runner.side_effect = failed_restore
+    with pytest.raises(RuntimeError, match="does not match"):
+        php.change("enable")
+    assert php.read_state() is not None
+    assert (appliance.apache / "conf-enabled/disable-web-php.conf").exists()
+
+
 def test_custom_site_is_rejected_before_changes(appliance):
     (appliance.apache / "sites-enabled/custom.conf").write_text("custom")
     with pytest.raises(RuntimeError, match="Custom Apache site"):
@@ -171,3 +204,51 @@ def test_failed_enable_keeps_guard_and_removes_probe(appliance, monkeypatch):
     assert (appliance.apache / "conf-enabled/disable-web-php.conf").exists()
     assert not list((appliance.base / "web").iterdir())
     assert php.read_state() is not None
+
+
+def test_guard_with_real_apache():
+    apache = shutil.which("apache2")
+    module_dir = Path("/usr/lib/apache2/modules")
+    if not apache or not (module_dir / "mod_mpm_event.so").exists():
+        pytest.skip("Debian Apache is not installed")
+    with tempfile.TemporaryDirectory(prefix="openwb-apache-test-") as directory:
+        root = Path(directory)
+        root.chmod(0o755)
+        (root / "index.html").write_text("dashboard")
+        (root / "source.php").write_text("<?php this must not be disclosed")
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        config = root / "apache.conf"
+        config.write_text(
+            'ServerRoot "{}"\nPidFile "{}/pid"\nErrorLog "{}/error.log"\n'
+            'ServerName localhost\nListen 127.0.0.1:{}\n'
+            'LoadModule mpm_event_module {}/mod_mpm_event.so\n'
+            'LoadModule authz_core_module {}/mod_authz_core.so\n'.format(
+                root, root, root, port, module_dir, module_dir)
+            + ("User www-data\nGroup www-data\n" if os.geteuid() == 0 else "")
+            + php.GUARD
+            + '<VirtualHost 127.0.0.1:{}>\nDocumentRoot "{}"\n'
+              '<Directory "{}">\nRequire all granted\n</Directory>\n</VirtualHost>\n'.format(port, root, root))
+        process = subprocess.Popen([apache, "-f", str(config), "-X"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        client = build_opener(ProxyHandler({}))
+        base_url = "http://127.0.0.1:" + str(port)
+        try:
+            for attempt in range(100):
+                try:
+                    with client.open(base_url + "/index.html", timeout=1) as response:
+                        assert response.read() == b"dashboard"
+                    break
+                except URLError:
+                    assert process.poll() is None, process.communicate()
+                    time.sleep(0.05)
+            else:
+                pytest.fail("Isolated Apache did not start")
+            for suffix in ("php", "PHP", "php7", "php74", "phtml", "phar", "phps", "php.txt", "php/path"):
+                with pytest.raises(HTTPError) as error:
+                    client.open(base_url + "/source." + suffix, timeout=2)
+                assert error.value.code == 403
+                assert b"<?php" not in error.value.read()
+        finally:
+            process.terminate()
+            process.communicate(timeout=10)
