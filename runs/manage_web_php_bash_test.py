@@ -152,6 +152,19 @@ def test_failed_enable_keeps_state_and_cleans_probe(appliance):
     assert not list((appliance / "web").iterdir())
 
 
+def test_failed_initial_enable_can_be_retried(appliance):
+    (appliance / "fail-http").touch()
+    assert invoke(appliance, "enable").returncode != 0
+    assert (appliance / "state/state").exists()
+    assert (appliance / "apache/conf-enabled/disable-web-php.conf").exists()
+    (appliance / "fail-http").unlink()
+    # The operator deliberately restarts the stopped service before live validation.
+    (appliance / "active").touch()
+    result = invoke(appliance, "enable")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (appliance / "state/state").exists()
+
+
 @pytest.mark.parametrize("mode", ["enable", "disable"])
 def test_stopped_service_is_not_started(appliance, mode):
     (appliance / "active").unlink()

@@ -106,12 +106,13 @@ if [[ -e $STATE/state ]]; then
 	mapfile -t saved <"$STATE/state"
 	api=${saved[0]:-invalid}; saved=("${saved[@]:1}")
 	[[ $api == true || $api == false ]] || die "Invalid saved API state."
-elif [[ $mode == disable ]]; then
+else
+	if [[ $mode == enable ]]; then
+		[[ ! -e $APACHE/conf-enabled/$GUARD.conf ]] || die "No Bash rollback state; guard retained."
+	fi
 	(( ${#saved[@]} )) || die "No enabled Debian mod_php module found."
 	printf '%s\n' "$api" "${saved[@]}" >"$STATE/state.tmp"
 	mv "$STATE/state.tmp" "$STATE/state"
-else
-	[[ ! -e $APACHE/conf-enabled/$GUARD.conf ]] || die "No Bash rollback state; guard retained."
 fi
 (( ${#saved[@]} )) || die "No PHP module to restore or validate."
 for module in "${saved[@]}"; do
