@@ -96,8 +96,8 @@ esac
     return root
 
 
-def invoke(root, mode):
-    return subprocess.run(["bash", str(root / "script.sh"), mode], capture_output=True, text=True,
+def invoke(root, mode, *options):
+    return subprocess.run(["bash", str(root / "script.sh"), mode, *options], capture_output=True, text=True,
                           env={**os.environ, "ROOT": str(root)}, timeout=15)
 
 
@@ -112,6 +112,9 @@ def test_round_trip_repeated_runs_and_order(appliance, api):
         assert result.returncode == 0, result.stdout + result.stderr
         assert "CONFIRMED" in result.stdout
         assert "UNKNOWN" in result.stdout
+        assert "INFO:" not in result.stdout
+        assert "DIAGNOSTIC:" not in result.stderr
+        assert "Usage:" not in result.stdout
     assert site.exists() == api
     assert sorted(p.stem for p in (root / "apache/mods-enabled").glob("*.load")) == ["php7.4", "php8.2"]
     assert not (root / "state/state").exists()
@@ -132,7 +135,7 @@ def test_missing_recognized_modules_prints_diagnostics_without_changes(appliance
         (enabled_dir / entry).touch()
     elif entry:
         (enabled_dir / entry).symlink_to("../mods-available/missing-php.load")
-    result = invoke(appliance, "disable")
+    result = invoke(appliance, "disable", "--debug")
     assert result.returncode != 0
     assert "DIAGNOSTIC: recognized enabled PHP modules: (none)" in result.stderr
     assert "mods-enabled PHP entries" in result.stderr
@@ -155,11 +158,38 @@ def test_existing_guard_is_reported_when_php_is_already_disabled(appliance):
     assert invoke(appliance, "disable").returncode == 0
     # Reproduce blocking without this script's saved state; never invent rollback modules.
     (appliance / "state/state").unlink()
-    result = invoke(appliance, "disable")
+    result = invoke(appliance, "disable", "--debug")
     assert result.returncode != 0
     assert "PHP deny guard is already enabled" in result.stdout
     assert "HTTP 403 may be due to this existing rule" in result.stdout
     assert "No enabled Debian mod_php module found" in result.stderr
+
+
+def test_missing_modules_without_debug_keeps_error_and_suggests_debug(appliance):
+    for module in (appliance / "apache/mods-enabled").glob("*.load"):
+        module.unlink()
+    result = invoke(appliance, "disable")
+    assert result.returncode != 0
+    assert "No enabled Debian mod_php module found" in result.stderr
+    assert "Rerun with --debug" in result.stderr
+    assert "DIAGNOSTIC:" not in result.stderr
+
+
+@pytest.mark.parametrize("arguments", [("--debug", "disable"), ("disable", "--debug")])
+def test_debug_flag_before_or_after_mode(appliance, arguments):
+    result = invoke(appliance, *arguments)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "INFO: checking Apache configuration" in result.stdout
+    assert "INFO: recognized enabled PHP modules:" in result.stdout
+    assert "CONFIRMED:" in result.stdout
+
+
+@pytest.mark.parametrize("arguments", [("--debug",), ("disable", "enable"), ("disable", "--unknown")])
+def test_invalid_arguments_do_not_change_configuration(appliance, arguments):
+    result = invoke(appliance, *arguments)
+    assert result.returncode != 0
+    assert "Usage:" in result.stdout
+    assert not (appliance / "commands").exists()
 
 
 @pytest.mark.parametrize("sites, expected_urls", [

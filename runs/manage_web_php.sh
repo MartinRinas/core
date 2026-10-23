@@ -8,19 +8,31 @@ STATE=/var/lib/openwb-web-php-bash
 GUARD=disable-web-php
 
 usage() {
-	echo "Usage: sudo $0 disable|enable"
+	echo "Usage: sudo $0 [--debug] disable|enable"
+	echo "--debug: show troubleshooting stages and module-detection diagnostics."
 	echo "Standard openWB Debian mod_php only; custom Apache/FPM/CGI setups need administrator review."
 	echo "PHP CLI and charging services are unchanged. Recheck after updates; no startup/UI integration."
 	echo "Enable restores saved modules/API state."
 	echo "Power loss/SIGKILL during enable is not crash-atomic; rerun disable before restarting Apache."
 }
 die() { echo "ERROR: $* Result NOT confirmed." >&2; exit 1; }
-step() { stage=$*; echo "INFO: $stage"; }
-[[ ${1:-} != --help && ${1:-} != -h ]] || { usage; exit 0; }
-[[ $# == 1 && ( $1 == disable || $1 == enable ) ]] || { usage; exit 1; }
+debug_enabled=0
+mode=
+debug() { if (( debug_enabled )); then echo "INFO: $*"; fi; }
+step() { stage=$*; debug "$stage"; }
+for argument in "$@"; do
+	case $argument in
+		--debug) debug_enabled=1 ;;
+		--help|-h) usage; exit 0 ;;
+		enable|disable)
+			[[ -z $mode ]] || { usage; exit 1; }
+			mode=$argument ;;
+		*) usage; exit 1 ;;
+	esac
+done
+[[ -n $mode ]] || { usage; exit 1; }
 [[ $EUID == 0 ]] || die "Run with sudo."
-mode=$1
-usage
+echo "Standard openWB mod_php only; custom Apache/FPM/CGI setups require administrator review."
 
 sudo_lock=/run/openwb-apache
 install -d -m 755 "$sudo_lock"
@@ -88,6 +100,10 @@ modules() {
 }
 module_diagnostics() {
 	local directory loaded
+	if (( ! debug_enabled )); then
+		echo "Rerun with --debug for PHP module-detection diagnostics." >&2
+		return 0
+	fi
 	echo "DIAGNOSTIC: recognized enabled PHP modules: ${saved[*]:-(none)}" >&2
 	echo "DIAGNOSTIC: looking for php<number>[.<number>].load; symlinks must resolve." >&2
 	for directory in mods-enabled mods-available; do
@@ -120,21 +136,21 @@ if enabled localhost; then urls+=(http://127.0.0.1:81); fi
 if enabled 000-default; then urls+=(http://127.0.0.1); fi
 if enabled apache-openwb-ssl; then urls+=(https://127.0.0.1); fi
 (( ${#urls[@]} )) || die "No standard openWB website enabled for HTTP validation (localhost, 000-default or apache-openwb-ssl)."
-echo "INFO: validation endpoints: ${urls[*]}"
+debug "validation endpoints: ${urls[*]}"
 [[ $(systemctl is-enabled apache2.service || true) != masked* ]] || die "Apache is masked."
 systemctl is-active --quiet apache2.service || die "Apache is stopped; start it explicitly before live validation."
 step "detecting PHP modules and rollback state"
 if [[ -e $APACHE/conf-enabled/$GUARD.conf ]]; then
-	echo "INFO: PHP deny guard is already enabled; HTTP 403 may be due to this existing rule."
+	debug "PHP deny guard is already enabled; HTTP 403 may be due to this existing rule."
 else
-	echo "INFO: PHP deny guard is not enabled."
+	debug "PHP deny guard is not enabled."
 fi
 mapfile -t saved < <(modules)
-echo "INFO: recognized enabled PHP modules: ${saved[*]:-(none)}"
+debug "recognized enabled PHP modules: ${saved[*]:-(none)}"
 api=false
 enabled http-api-ssl && api=true
 if [[ -e $STATE/state ]]; then
-	echo "INFO: reading saved module/API state from $STATE/state"
+	debug "reading saved module/API state from $STATE/state"
 	mapfile -t saved <"$STATE/state"
 	api=${saved[0]:-invalid}; saved=("${saved[@]:1}")
 	[[ $api == true || $api == false ]] || die "Invalid saved API state."
